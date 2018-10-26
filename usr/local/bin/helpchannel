@@ -1,0 +1,439 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+from Tkinter import *
+import json
+import subprocess
+import threading
+from tkMessageBox import showerror
+import urllib2
+import ConfigParser
+import gettext
+import platform
+import os
+import os.path
+import urllib
+import time
+import logging
+
+#BASE_DIR = os.path.dirname(os.path.realpath(__file__))
+BASE_DIR = "/opt/helpchannel"
+
+config = ConfigParser.ConfigParser()
+config.read("/etc/helpchannel.conf")
+
+subproc = None
+
+
+# Function to get dictionary with the values of one section of the configuration file
+def config_section_map(section):
+    dict1 = {}
+    options = config.options(section)
+    for option in options:
+        try:
+            dict1[option] = config.get(section, option)
+        except:
+            dict1[option] = None
+    return dict1
+
+
+def build_rest_url(relative_path, params={}):
+    """
+    Builds a valid REST URI
+
+    :param relative_path: The relative path to the REST service
+    :type params: A dictionary of parameters to be set in the URI. Default empty
+    """
+    url_params = {'access-token': user_access_token, 'connection_code': connection_code}
+    url_params.update(params)
+
+    encoded_params = urllib.urlencode(url_params)
+
+    return rest_base + relative_path + '?' + encoded_params
+
+
+def do_rest_request(url, params={}):
+    """
+    Performs a REST request
+
+    :param url: the relative url
+    """
+    urllib2.urlopen(build_rest_url(url, params))
+
+    return
+
+
+def kill_x11():
+    if subproc is not None and  subproc.poll() is not 0:
+        subproc.kill()
+
+    if subproc_tunnel is not None and  subproc_tunnel.poll() is not 0:
+        subproc_tunnel.kill()	
+
+
+def get_machine_data():
+        return (('processor',platform.processor()),('system-data',platform.linux_distribution()))
+
+
+
+# Global variables start
+
+status='00-NO-LOGGED'
+
+# Global variable to check if we have already found a technician or we need to keep searching
+alive = False
+closeDialogOpened = False
+
+# REST connection parameters
+user_access_token = ""
+connection_code = ""
+
+# REST base url
+rest_base = config_section_map("ServerConfig")['rest_base_url']
+
+# Global variables end
+
+
+# Set default locale
+language = config_section_map("i18nConfig")['language'] or 'es'
+
+try:
+    lang = gettext.translation(language, localedir=BASE_DIR + '/locale', languages=[language])
+except IOError:
+    print "No translations available"
+
+lang.install(unicode=1)
+
+
+class HelpChannel(Tk):
+    """
+    Main application class. It's responsible for showing user dialogs.
+    """
+
+    def __init__(self, *args, **kwargs):
+        Tk.__init__(self)
+
+        self.container = Frame(self)
+        self.container.pack(side="top", fill="both", expand=True,padx=10,pady=10)
+        self.container.grid_rowconfigure(0, weight=1)
+        self.container.grid_columnconfigure(0, weight=1)
+
+        self.wm_title("Help Channel")
+
+        self._frame = LoginFrame(parent=self.container, controller=self) #FIRST DIALOG
+
+        if config_section_map("UserConfig")['auto_login'] == "True":
+          self._frame.bt.invoke()
+
+    def switch_frame(self, frame_class):
+        """Destroys current frame and replaces it with a new one."""
+        new_frame = frame_class(parent=self.container, controller=self)
+        self._frame.destroy()
+        self._frame = new_frame
+
+
+    def open_connection(self):
+        """
+        Function to open connection between local vnc and remote vnc viewer 
+        """
+
+        command_full_path = config_section_map("x11vncConfig")['command_full_path']
+        repeater = config_section_map("x11vncConfig")['remote_repeater']
+        port = config_section_map("x11vncConfig")['remote_port']
+
+        connect_parameter = "repeater=ID:%s+%s:%s" % (connection_code, repeater, port,)
+
+        command = [command_full_path, "-connect", connect_parameter]
+
+        global subproc_vnc
+        subproc_vnc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+        	
+        # Rest request to accept connection
+        do_rest_request('/connection/accept')
+
+        global alive
+        alive = False
+        self.switch_frame(EstablishedConnection)
+
+
+class LoginFrame(Frame):
+    """
+    Class that represent the 'Login' screen
+    """
+
+    def __init__(self, parent, controller):
+        Frame.__init__(self, parent)
+        self.controller=controller
+
+        if config_section_map("UserConfig")['default_user']:
+           name=StringVar(value=config_section_map("UserConfig")['default_user'])
+        else:
+           name=StringVar() 
+
+        if config_section_map("UserConfig")['default_password']:
+           password=StringVar(value=config_section_map("UserConfig")['default_password'])
+        else:
+           password=StringVar() 
+
+        padtop = 50
+        length_entry = 25
+
+        Label(self, text=_('Username:')).grid(row=0, column=0, pady=(padtop, 0), sticky=S)
+        e1=Entry(self, textvariable=name, width=length_entry)
+        e1.grid(row=0, column=1, pady=(padtop, 0))
+        e1.focus()
+
+        Label(self, text=_('Password:')).grid(row=1, column=0, pady=(0, padtop))
+        Entry(self, textvariable=password, show="*", width=length_entry).grid(row=1, column=1, pady=(0, padtop))
+
+        self.bt=Button(self, text=_("Login"), command=lambda: self.do_login(name.get(), password.get(), controller))
+        self.bt.grid(row=2, columnspan=2)
+        self.pack()
+
+
+
+    def do_login(self, username, password, controller):
+
+        token=config_section_map("UserConfig")['default_token']
+        encoded_params=urllib.urlencode(get_machine_data())
+
+        req_url = rest_base + '/user/login?username=%s&password=%s&machine_name=%s&machine_token=%s&machine_data=%s' % (
+            username, password, platform.node(), token, encoded_params)
+
+        json_return = json.load(urllib2.urlopen(req_url))
+        return_status = json_return['status']
+
+        if return_status == 'error':
+            showerror(_('Login error'), _('Wrong username or password'))
+        else:
+
+	    tunnelscript = config_section_map("TunnelConfig")['command_full_path']	
+	    command = [tunnelscript]
+	
+	    global subproc_tunnel, user_access_token, connection_code
+        subproc_tunnel = subprocess.Popen(command,bufsize=0,shell=False)
+        user_access_token = json_return['access_token']
+        connection_code = json_return['connection_code']
+
+        if config_section_map("UserConfig")['show_technician'] == "True":
+           controller.switch_frame(WaitTecFrame)
+        else:
+           controller.open_connection()
+
+
+class WaitTecFrame(Frame):
+    """
+    Class that represent the 'Waiting technicians' screen
+    """
+
+    def __init__(self, parent, controller):
+        Frame.__init__(self, parent)
+        self.controller=controller
+
+        global alive
+        alive = True
+
+        label = Label(self, text=_('Help request waiting for a technician...'))
+        label.pack()
+
+        bottom = Frame(self)
+        bottom.pack(side=BOTTOM, fill=X)
+
+        self.work(bottom, label)
+
+        accept_button = Button(self, text=_('Accept'), command=lambda: controller.open_connection())
+        accept_button.pack(in_=bottom, side=LEFT, fill=BOTH, expand=True)
+
+        refuse_button = Button(self, text=_('Reject'), command=lambda: self.search_again(bottom, label))
+        refuse_button.pack(in_=bottom, side=LEFT, fill=BOTH, expand=True)
+
+        self.pack()
+
+
+
+
+
+    def search_again(self, button_frame, label):
+        """
+        This method searches technicians again when user refused a request.
+        :param button_frame: Container of buttons 'Accept' and 'Refuse'
+        :type button_frame: tk.Frame
+        :param label: Text with the message 'Waiting technicians...'
+        :type label: tk.Label
+        """
+
+        req_url = build_rest_url('/connection/reject')
+        json_return = json.load(urllib2.urlopen(req_url))
+
+        if json_return["status"] == "success":
+
+            global alive
+            alive = True
+            self.work(button_frame, label)
+
+        label.config(text=_('Help request waiting for a technician...'))
+
+        button_frame.pack_forget()
+
+    def work(self, buttonsFrame, label):
+        """
+        This method searches available technicians every 'polling_interval' (check config.ini) seconds.
+        :param buttonsFrame: Container of buttons 'Accept' and 'Refuse'
+        :type buttonsFrame: tk.Frame
+        :param label: Text with the message 'Waiting technicians...'
+        :type label: tk.Label
+        """
+
+        req_url = build_rest_url('/connection/fetch')
+
+        json_return = json.load(urllib2.urlopen(req_url))
+
+        has_tech = json_return['has_tech']
+        tech_name = json_return['tech_name']
+        polling_interval = config_section_map("ServerConfig")['polling_interval']
+
+        if has_tech == '0':
+            buttonsFrame.pack_forget()
+        else:
+            global alive
+            alive = False
+            buttonsFrame.pack(side=BOTTOM, fill=X)
+            label.config(text=tech_name + ' ' + _("wants to help you"))
+
+        if alive:
+            threading.Timer(float(polling_interval), self.work, (buttonsFrame, label)).start()
+
+
+class EstablishedConnection(Frame):
+    """
+    Class that represent the 'Established connection' screen
+    """
+
+    def __init__(self, parent, controller):
+        Frame.__init__(self, parent)
+        self.controller=controller
+
+        bottom = Frame(self)
+        bottom.pack(side=BOTTOM, fill=X)
+
+        self.check_alive(subproc_vnc, controller)
+
+        label = Label(self, text=_('Connection stablished'), bg="white")
+
+        label.pack(side=LEFT, fill=BOTH, expand=True)
+
+        finish_button = Button(self, text=_('Shut off connection'), command=lambda: self.finish_connection(controller, ))
+        finish_button.pack(in_=bottom, side=LEFT, fill=BOTH, expand=True)
+
+        self.pack()
+        
+
+    def finish_connection(self, controller):
+        """
+        Function to close the connection
+        :param controller: Handler's frame
+        :type controller: HelpChannel
+        """
+
+        kill_x11()
+        do_rest_request('/connection/finish', {'finisher': 'user'})
+        app.destroy()
+
+    def check_alive(self, subproc_vnc, controller):
+        """
+        Check if the connection is still alive. This checking performs every X seconds.
+        The amount of seconds are provided in config.ini
+        :param subproc_vnc: Launched process by the application for handles the applicant's remote desktop
+        :type subproc_vnc: subprocess
+        """
+        seconds = float(config_section_map("x11vncConfig")['polling_interval'])
+
+        if subproc_vnc.poll() == 0:
+            do_rest_request('/connection/finish', {'finisher': 'tech'})
+            controller.switch_frame(FinishedConnection)
+
+        threading.Timer(seconds, self.check_alive, (subproc_vnc, controller,)).start()
+
+
+class FinishedConnection(Frame):
+    def __init__(self, parent, controller):
+        Frame.__init__(self, parent)
+        self.controller=controller
+
+        label = Label(self, text=_('Connection finished'))
+#        label.pack()
+
+        self.pack()
+
+
+class CustomAskOkCancel:
+    def __init__(self, parent, window_title, ok_message, cancel_message, label_message):
+        self.response = False
+
+        top = self.top = Toplevel(parent)
+        Label(top, text=label_message).pack()
+        top.wm_title(window_title)
+
+        bottom = Frame(top)
+        bottom.pack(side=BOTTOM, fill=X, pady=(30, 0))
+
+        button_ok = Button(top, text=ok_message, command=self.ok)
+        button_ok.pack(in_=bottom, side=LEFT, fill=BOTH, expand=True, pady=(0, 0))
+
+        button_cancel = Button(top, text=cancel_message, command=self.top.destroy)
+        button_cancel.pack(in_=bottom, side=LEFT, fill=BOTH, expand=True, pady=(0, 0))
+
+    def ok(self):
+        self.response = True;
+        self.top.destroy()
+
+
+if __name__ == "__main__":
+    x11vnc_path = config_section_map("x11vncConfig")['command_full_path']
+    if not os.path.isfile(x11vnc_path):
+        # x11vnc not found
+        showerror(_('Error'), _('x11vnc not found at %s. Please, check it and try again.') % x11vnc_path)
+        sys.exit(0)
+
+    app = HelpChannel()
+
+
+    def custom_ask_ok_cancel(windows_title, ok_message, cancel_message, label_message):
+        dialog = CustomAskOkCancel(app, windows_title, ok_message, cancel_message, label_message)
+        app.wait_window(dialog.top)
+        return dialog.response
+
+
+    def on_closing():
+        """
+        Function to catch the clic event generated by application's close button.
+        """
+        global closeDialogOpened
+
+        if not closeDialogOpened:
+            if status > "00-NO-LOGIN":
+                closeDialogOpened = True
+
+                if custom_ask_ok_cancel(_('Close connection'), _('Ok'), _('Cancel'),
+                                        _('Are you sure you want to abort the connection?')):
+                    do_rest_request('/connection/close')
+                    kill_x11()
+                    app.destroy()
+                    sys.exit(0)
+                else:
+                    closeDialogOpened = False
+            else:
+#                kill_x11()
+                app.destroy()
+                sys.exit(0)
+	else:
+		kill_x11()
+		app.destroy()
+		sys.exit(0)	
+
+
+    app.protocol('WM_DELETE_WINDOW', on_closing)
+    app.mainloop()  
+    #app.destroy()
+    os._exit(1)	
+    

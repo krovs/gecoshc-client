@@ -1,0 +1,11 @@
+Package: gecoshc-client
+Architecture: all
+Section: utils
+Priority: optional
+Depends: python-tk, x11vnc
+Description: Help Channel client
+Version: 1.0
+Maintainer: GECOS Team <gecos@guadalinex.org>
+Installed-Size: 3800
+Homepage: https://github.com/gecos-team/gecoshc-client
+
