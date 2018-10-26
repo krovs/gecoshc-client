@@ -1,13 +1,8 @@
 #!/usr/bin/env python
 
-import pycos, socket, sys, time
+import pycos, socket, sys
 import websocket
 import ConfigParser
-import gettext
-import platform
-import os
-import os.path
-import urllib
 
 # Function to get dictionary with the values of one section of the configuration file
 def config_section_map(section):
@@ -28,29 +23,24 @@ def ws_send(conn,ws, task=None):
 
     while True:
         try:
-	    #print("Esperando datos en websocket")
             line = yield thread_pool.async_task(ws.recv)
         except:
             break
         if not line:
-	    #print("No se han recibido datos en el websocket")	
             break
-	#print('Recibido %s desde el websocket' % line)	
-	yield conn.send(line)        
+        yield conn.send(line)        
 
 def client_send(conn,ws, task=None):
     task.set_daemon()
 
     while True:
         try:
-            #print("Esperando datos en el socket")
             line = yield conn.recv(1024)	
         except:
             break
         if not line:
             break
-	#print('Recibido %s en el socket' % line)
-	ws.send_binary(line)        
+        ws.send_binary(line)        
 
 def hcwst(host, port,repeater_ws,proxy_host,proxy_port,proxy_username,proxy_password,task=None):
 
@@ -67,13 +57,13 @@ def hcwst(host, port,repeater_ws,proxy_host,proxy_port,proxy_username,proxy_pass
     ws = websocket.WebSocket()
 
     if not proxy_host:
-	ws.connect(repeater_ws, subprotocols=["binary"],sockopt=(socket.IPPROTO_TCP, socket.TCP_NODELAY))
+        ws.connect(repeater_ws, subprotocols=["binary"],sockopt=(socket.IPPROTO_TCP, socket.TCP_NODELAY))
     else:
         ws.connect(repeater_ws,http_proxy_host=proxy_host,http_proxy_port=proxy_port,http_proxy_auth=proxy_auth, subprotocols=["binary"],sockopt=(socket.IPPROTO_TCP, socket.TCP_NODELAY))	
   
     print('Tunnel connected to %s'% repeater_ws )
 
-    conn, addr = yield sock.accept()
+    conn, _ = yield sock.accept()
     pycos.Task(client_send, conn,ws)
     pycos.Task(ws_send, conn,ws)
 
