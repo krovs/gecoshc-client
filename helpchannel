@@ -15,11 +15,14 @@ import os.path
 import urllib
 import time
 import logging
+import getpass
+from Crypto.PublicKey import RSA
+import requests
+import ssl
 
 BASE_DIR = os.path.dirname(os.path.realpath(__file__))
 
 config = ConfigParser.ConfigParser()
-config.read("/etc/helpchannel.conf")
 
 subproc = None
 
@@ -43,7 +46,7 @@ def build_rest_url(relative_path, params={}):
     :param relative_path: The relative path to the REST service
     :type params: A dictionary of parameters to be set in the URI. Default empty
     """
-    url_params = {'access-token': user_access_token, 'connection_code': connection_code}
+    url_params = {'connection_code': connection_code}
     url_params.update(params)
 
     encoded_params = urllib.urlencode(url_params)
@@ -57,7 +60,7 @@ def do_rest_request(url, params={}):
 
     :param url: the relative url
     """
-    urllib2.urlopen(build_rest_url(url, params))
+    urllib2.urlopen(build_rest_url(url, params), context=ssl_context)
 
     return
 
@@ -84,24 +87,19 @@ alive = False
 closeDialogOpened = False
 
 # REST connection parameters
-user_access_token = ""
 connection_code = ""
 
-# REST base url
-rest_base = config_section_map("ServerConfig")['rest_base_url']
+known_message = 'En un lugar de la Mancha, de cuyo nombre no quiero acordarme,'\
+    ' no ha mucho tiempo que vivía un hidalgo de los de lanza en astillero, '\
+    'adarga antigua, rocín flaco y galgo corredor.'
+
+
 
 # Global variables end
 
 
 # Set default locale
-language = config_section_map("i18nConfig")['language'] or 'es'
-
-try:
-    lang = gettext.translation(language, localedir=BASE_DIR + '/locale', languages=[language])
-except IOError:
-    print "No translations available"
-
-lang.install(unicode=1)
+language = 'es'
 
 
 class HelpChannel(Tk):
@@ -117,12 +115,22 @@ class HelpChannel(Tk):
         self.container.grid_rowconfigure(0, weight=1)
         self.container.grid_columnconfigure(0, weight=1)
 
+        # Center in the screen
+        windowWidth = self.winfo_reqwidth()
+        windowHeight = self.winfo_reqheight()
+         
+        # Gets both half the screen width/height and window width/height
+        positionRight = int(self.winfo_screenwidth()/2 - windowWidth/2)
+        positionDown = int(self.winfo_screenheight()/2 - windowHeight/2)
+         
+        # Positions the window in the center of the page.
+        self.geometry("+{}+{}".format(positionRight, positionDown))
+
         self.wm_title("Help Channel")
 
-        self._frame = LoginFrame(parent=self.container, controller=self) #FIRST DIALOG
+        self._frame = LoginFrame(parent=self.container, controller=self)
+        self._frame.do_login(self)
 
-        if config_section_map("UserConfig")['auto_login'] == "True":
-          self._frame.bt.invoke()
 
     def switch_frame(self, frame_class):
         """Destroys current frame and replaces it with a new one."""
@@ -136,6 +144,9 @@ class HelpChannel(Tk):
         Function to open connection between local vnc and remote vnc viewer 
         """
 
+        global subproc_tunnel
+        subproc_tunnel = subprocess.Popen(command,bufsize=0,shell=False)
+
         command_full_path = config_section_map("x11vncConfig")['command_full_path']
         repeater = config_section_map("x11vncConfig")['remote_repeater']
         port = config_section_map("x11vncConfig")['remote_port']
@@ -148,7 +159,7 @@ class HelpChannel(Tk):
         subproc_vnc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
         	
         # Rest request to accept connection
-        do_rest_request('/connection/accept')
+        do_rest_request('/help-channel-client/accept')
 
         global alive
         alive = False
@@ -164,60 +175,90 @@ class LoginFrame(Frame):
         Frame.__init__(self, parent)
         self.controller=controller
 
-        if config_section_map("UserConfig")['default_user']:
-           name=StringVar(value=config_section_map("UserConfig")['default_user'])
-        else:
-           name=StringVar() 
+        bottom = Frame(self)
+        bottom.pack(side=BOTTOM, fill=X)
 
-        if config_section_map("UserConfig")['default_password']:
-           password=StringVar(value=config_section_map("UserConfig")['default_password'])
-        else:
-           password=StringVar() 
+        label = Label(self, text=_('Connecting to GECOS Control Center...'), bg="white")
 
-        padtop = 50
-        length_entry = 25
+        label.pack(side=LEFT, fill=BOTH, expand=True)
 
-        Label(self, text=_('Username:')).grid(row=0, column=0, pady=(padtop, 0), sticky=S)
-        e1=Entry(self, textvariable=name, width=length_entry)
-        e1.grid(row=0, column=1, pady=(padtop, 0))
-        e1.focus()
+        finish_button = Button(self, text=_('Cancel'), command=lambda: self.cancel(controller, ))
+        finish_button.pack(in_=bottom, side=LEFT, fill=BOTH, expand=True)
 
-        Label(self, text=_('Password:')).grid(row=1, column=0, pady=(0, padtop))
-        Entry(self, textvariable=password, show="*", width=length_entry).grid(row=1, column=1, pady=(0, padtop))
-
-        self.bt=Button(self, text=_("Login"), command=lambda: self.do_login(name.get(), password.get(), controller))
-        self.bt.grid(row=2, columnspan=2)
         self.pack()
 
+    def cancel(self, controller):
+        sys.exit(0)
 
 
-    def do_login(self, username, password, controller):
+    def do_login(self, controller):
+        
+        # Read /etc/gcc.control file
+        gcc_control_json = []
+        with file('/etc/gcc.control') as gcc_control:
+            content = gcc_control.read()
+            gcc_control_json = json.loads(content)
 
-        token=config_section_map("UserConfig")['default_token']
-        encoded_params=urllib.urlencode(get_machine_data())
-
-        req_url = rest_base + '/user/login?username=%s&password=%s&machine_name=%s&machine_token=%s&machine_data=%s' % (
-            username, password, platform.node(), token, encoded_params)
-
-        json_return = json.load(urllib2.urlopen(req_url))
-        return_status = json_return['status']
-
-        if return_status == 'error':
-            showerror(_('Login error'), _('Wrong username or password'))
+        # Read /etc/chef/client.pem file
+        client_pem = []
+        with file('/etc/chef/client.pem') as client_f:
+            client_pem = client_f.read()
+            
+        # Encrypt known message
+        private_key = RSA.importKey(client_pem)
+        encrypted = private_key.decrypt(known_message).encode('hex')   
+        
+        global rest_base
+        rest_base = gcc_control_json['uri_gcc']
+        
+        hc_server = config_section_map('TunnelConfig')['tunnel_url']
+        username = getpass.getuser()
+        url = gcc_control_json['uri_gcc']
+        node_id = gcc_control_json['gcc_nodename']
+        gcc_username = gcc_control_json['gcc_username']
+        json_return = {}
+        ssl_verify = (config_section_map("ServerConfig")['ssl_verify'] in 
+            ['True', 'true', '1', 't', 'y', 'yes'])
+            
+        global ssl_context
+        if ssl_verify:
+            ssl_context = ssl.create_default_context()
         else:
+            ssl_context = ssl._create_unverified_context()
+            
+        try:
+            # Login in the GECOS Control Center
+            res = requests.post(url+'/help-channel-client/login', 
+                data={'node_id':node_id, 'username':username, 
+                    'gcc_username': gcc_username, 'secret':encrypted,
+                    'hc_server': hc_server}, verify=ssl_verify)
+            if res.ok:
+                json_return = res.json()
 
-	    tunnelscript = config_section_map("TunnelConfig")['command_full_path']	
-	    command = [tunnelscript]
+        except Exception as e:
+            showerror(_('Error'), _('Error login in GECOS Control Center: %s')
+                % (str(e)))
+            sys.exit(0)
+            
+        if not res.ok or not json_return['ok']:
+            errormsg = 'NO JSON data'
+            if 'message' in json_return:
+                errormsg = json_return['message']
+
+            showerror(_('Error'), _('Error login in GECOS Control Center: %s')
+                % (errormsg))
+            sys.exit(0)
+                
+        tunnelscript = config_section_map("TunnelConfig")['command_full_path']	
+        command = [tunnelscript]
 	
-	    global subproc_tunnel, user_access_token, connection_code
-        subproc_tunnel = subprocess.Popen(command,bufsize=0,shell=False)
-        user_access_token = json_return['access_token']
-        connection_code = json_return['connection_code']
-
+        global connection_code
+        connection_code = json_return['token']
+        
         if config_section_map("UserConfig")['show_technician'] == "True":
-           controller.switch_frame(WaitTecFrame)
+            controller.switch_frame(WaitTecFrame)
         else:
-           controller.open_connection()
+            controller.open_connection()
 
 
 class WaitTecFrame(Frame):
@@ -261,8 +302,8 @@ class WaitTecFrame(Frame):
         :type label: tk.Label
         """
 
-        req_url = build_rest_url('/connection/reject')
-        json_return = json.load(urllib2.urlopen(req_url))
+        req_url = build_rest_url('/help-channel-client/reject')
+        json_return = json.load(urllib2.urlopen(req_url, context=ssl_context))
 
         if json_return["status"] == "success":
 
@@ -283,15 +324,24 @@ class WaitTecFrame(Frame):
         :type label: tk.Label
         """
 
-        req_url = build_rest_url('/connection/fetch')
+        req_url = build_rest_url('/help-channel-client/fetch')
 
-        json_return = json.load(urllib2.urlopen(req_url))
+        json_return = json.load(urllib2.urlopen(req_url, context=ssl_context))
+
+        if ((not 'ok' in json_return) or (not json_return['ok'])):
+            errormsg = 'NO JSON data'
+            if 'message' in json_return:
+                errormsg = json_return['message']
+
+            showerror(_('Error'), _('Error fetching technician: %s')
+                % (errormsg))
+            sys.exit(0)
 
         has_tech = json_return['has_tech']
         tech_name = json_return['tech_name']
         polling_interval = config_section_map("ServerConfig")['polling_interval']
 
-        if has_tech == '0':
+        if not has_tech:
             buttonsFrame.pack_forget()
         else:
             global alive
@@ -335,7 +385,7 @@ class EstablishedConnection(Frame):
         """
 
         kill_x11()
-        do_rest_request('/connection/finish', {'finisher': 'user'})
+        do_rest_request('/help-channel-client/finish', {'finisher': 'user'})
         app.destroy()
 
     def check_alive(self, subproc_vnc, controller):
@@ -348,7 +398,7 @@ class EstablishedConnection(Frame):
         seconds = float(config_section_map("x11vncConfig")['polling_interval'])
 
         if subproc_vnc.poll() == 0:
-            do_rest_request('/connection/finish', {'finisher': 'tech'})
+            do_rest_request('/help-channel-client/finish', {'finisher': 'tech'})
             controller.switch_frame(FinishedConnection)
 
         threading.Timer(seconds, self.check_alive, (subproc_vnc, controller,)).start()
@@ -388,12 +438,58 @@ class CustomAskOkCancel:
 
 
 if __name__ == "__main__":
+    
+    # Read /etc/helpchannel.conf file
+    if (not os.path.isfile('/etc/helpchannel.conf') or 
+        not os.access('/etc/helpchannel.conf', os.R_OK)):
+        # /etc/helpchannel.conf not found or not readable
+        showerror('Error', '/etc/helpchannel.conf not found at %s or is '\
+             'not readable. Please, check it and try again.')
+        sys.exit(0)
+        
+    try:
+        config.read('/etc/helpchannel.conf')
+    except ConfigParser.ParsingError as err:
+        showerror('Error', 'Error parsing /etc/helpchannel.conf: %s' 
+            % (str(err)))
+        sys.exit(0)
+        
+    # Set default locale
+    language = config_section_map("i18nConfig")['language'] or 'es'
+
+    try:
+        lang = gettext.translation(language, localedir=BASE_DIR + '/locale', languages=[language])
+    except IOError:
+        print "No translations available"
+    
+    lang.install(unicode=1)    
+
+    # Check x11vnc
     x11vnc_path = config_section_map("x11vncConfig")['command_full_path']
     if not os.path.isfile(x11vnc_path):
         # x11vnc not found
-        showerror(_('Error'), _('x11vnc not found at %s. Please, check it and try again.') % x11vnc_path)
+        showerror(_('Error'), _('x11vnc not found at %s. Please, check it and '\
+            'try again.') % x11vnc_path)
         sys.exit(0)
 
+    # Check /etc/gcc.control
+    if (not os.path.isfile('/etc/gcc.control') or 
+        not os.access('/etc/gcc.control', os.R_OK)):
+        # gcc.control not found or not readable
+        showerror(_('Error'), _('gcc.control not found at %s or is '\
+             'not readable. Please, check it and try again.'))
+        sys.exit(0)    
+    
+    # Check /etc/chef/client.pem
+    if (not os.path.isfile('/etc/chef/client.pem') or 
+        not os.access('/etc/chef/client.pem', os.R_OK)):
+        # /etc/chef/client.pem not found or not readable
+        showerror(_('Error'), _('/etc/chef/client.pem not found at %s or is '\
+             'not readable. Please, check it and try again.'))
+        sys.exit(0)        
+    
+    
+    # Start Help Channel Client
     app = HelpChannel()
 
 
@@ -415,7 +511,7 @@ if __name__ == "__main__":
 
                 if custom_ask_ok_cancel(_('Close connection'), _('Ok'), _('Cancel'),
                                         _('Are you sure you want to abort the connection?')):
-                    do_rest_request('/connection/close')
+                    do_rest_request('/help-channel-client/close')
                     kill_x11()
                     app.destroy()
                     sys.exit(0)
