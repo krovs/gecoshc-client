@@ -60,9 +60,26 @@ def do_rest_request(url, params={}):
 
     :param url: the relative url
     """
-    urllib2.urlopen(build_rest_url(url, params), context=ssl_context)
+    
+    ok = False
+    message = ''
+    try:
+        response = urllib2.urlopen(build_rest_url(url, params), context=ssl_context)
+        if response.getcode() == 200:
+            ok = True
+            contents = response.read()
+            contents = json.loads(contents)
+            if 'message' in contents:
+                message = contents['message']
+    
+            if 'ok' in contents:
+                ok = contents['ok']
+    
+    except urllib2.HTTPError as err:
+        ok = False
+        message = str(err)
 
-    return
+    return (ok, message)
 
 
 def kill_x11():
@@ -144,8 +161,11 @@ class HelpChannel(Tk):
         Function to open connection between local vnc and remote vnc viewer 
         """
 
-        global subproc_tunnel
-        subproc_tunnel = subprocess.Popen(command,bufsize=0,shell=False)
+        global subproc_tunnel, rest_request_errormsg
+        
+        tunnelscript = config_section_map("TunnelConfig")['command_full_path']  
+        command = [tunnelscript]
+        subproc_tunnel = subprocess.Popen(command, bufsize=0, shell=False)
 
         command_full_path = config_section_map("x11vncConfig")['command_full_path']
         repeater = config_section_map("x11vncConfig")['remote_repeater']
@@ -159,7 +179,12 @@ class HelpChannel(Tk):
         subproc_vnc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
         	
         # Rest request to accept connection
-        do_rest_request('/help-channel-client/accept')
+        ok, errormsg = do_rest_request('/help-channel-client/accept');
+        if not ok:
+            showerror(_('Error'), _('Error accepting technician: %s')
+                % (errormsg))
+            kill_x11()
+            sys.exit(0)
 
         global alive
         alive = False
@@ -249,9 +274,6 @@ class LoginFrame(Frame):
                 % (errormsg))
             sys.exit(0)
                 
-        tunnelscript = config_section_map("TunnelConfig")['command_full_path']	
-        command = [tunnelscript]
-	
         global connection_code
         connection_code = json_return['token']
         

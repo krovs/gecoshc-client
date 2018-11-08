@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import pycos, socket, sys
+import pycos, socket, sys, ssl
 import websocket
 import ConfigParser
 
@@ -42,7 +42,7 @@ def client_send(conn,ws, task=None):
             break
         ws.send_binary(line)        
 
-def hcwst(host, port,repeater_ws,proxy_host,proxy_port,proxy_username,proxy_password,task=None):
+def hcwst(host, port,repeater_ws,proxy_host,proxy_port,proxy_username,proxy_password, ssl_verify, task=None):
 
     task.set_daemon()
     sock = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
@@ -53,8 +53,10 @@ def hcwst(host, port,repeater_ws,proxy_host,proxy_port,proxy_username,proxy_pass
     sock.listen(1)
 
     print('Tunnel listening at %s' % str(sock.getsockname()))
-
-    ws = websocket.WebSocket()
+    if ssl_verify:
+        ws = websocket.WebSocket()
+    else:
+        ws = websocket.WebSocket(sslopt={"cert_reqs": ssl.CERT_NONE})
 
     if not proxy_host:
         ws.connect(repeater_ws, subprotocols=["binary"],sockopt=(socket.IPPROTO_TCP, socket.TCP_NODELAY))
@@ -73,22 +75,37 @@ if __name__ == '__main__':
     config = ConfigParser.ConfigParser()
     config.read("/etc/helpchannel.conf")
 
-    proxy_host = config_section_map("ServerConfig")['proxy_host']
-    proxy_port = config_section_map("ServerConfig")['proxy_port']
-    proxy_username = config_section_map("ServerConfig")['proxy_username']
-    proxy_password = config_section_map("ServerConfig")['proxy_password']
+    server_config = config_section_map("ServerConfig")
+
+    proxy_host = None
+    if 'proxy_host' in server_config:
+        proxy_host = server_config['proxy_host']
+        
+    proxy_port = None
+    if 'proxy_port' in server_config:
+        proxy_port = server_config['proxy_port']
+        
+    proxy_username = None
+    if 'proxy_username' in server_config:
+        proxy_username = server_config['proxy_username']
+        
+    proxy_password = None
+    if 'proxy_password' in server_config:
+        proxy_password = server_config['proxy_password']
 
     repeater_ws = config_section_map("TunnelConfig")['tunnel_url']
     local_tunnel_port = config_section_map("TunnelConfig")['local_port']
+    ssl_verify = (config_section_map("TunnelConfig")['ssl_verify'] in 
+        ['True', 'true', '1', 't', 'y', 'yes'])
 
-    proxy_auth=(proxy_username,proxy_password)
+    proxy_auth=(proxy_username, proxy_password)
 
     host, port = '127.0.0.1', int(local_tunnel_port)
     if len(sys.argv) > 1:
         host = sys.argv[1]
     if len(sys.argv) > 2:
         port = int(sys.argv[2])
-    pycos.Task(hcwst, host, local_tunnel_port,repeater_ws,proxy_host,proxy_port,proxy_username,proxy_password)
+    pycos.Task(hcwst, host, local_tunnel_port,repeater_ws,proxy_host,proxy_port,proxy_username,proxy_password, ssl_verify)
     if sys.version_info.major > 2:
         read_input = input
     else:
