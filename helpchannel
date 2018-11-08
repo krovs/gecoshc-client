@@ -5,7 +5,7 @@ from Tkinter import *
 import json
 import subprocess
 import threading
-from tkMessageBox import showerror
+from tkMessageBox import showerror, showinfo
 import urllib2
 import ConfigParser
 import gettext
@@ -19,6 +19,9 @@ import getpass
 from Crypto.PublicKey import RSA
 import requests
 import ssl
+import logging
+
+logging.basicConfig(level=logging.DEBUG)
 
 BASE_DIR = os.path.dirname(os.path.realpath(__file__))
 
@@ -61,6 +64,8 @@ def do_rest_request(url, params={}):
     :param url: the relative url
     """
     
+    logging.info('REQUEST: %s'%(url))
+    
     ok = False
     message = ''
     try:
@@ -83,11 +88,13 @@ def do_rest_request(url, params={}):
 
 
 def kill_x11():
-    if subproc is not None and  subproc.poll() is not 0:
+    logging.info('Killing tunnel and x11vnc')
+    if subproc is not None and  subproc.poll() is None:
         subproc.kill()
 
-    if subproc_tunnel is not None and  subproc_tunnel.poll() is not 0:
-        subproc_tunnel.kill()	
+    if subproc_tunnel is not None and  subproc_tunnel.poll() is None:
+        subproc_tunnel.kill()
+    logging.info('Tunnel and x11vnc process killed')    
 
 
 def get_machine_data():
@@ -97,7 +104,8 @@ def get_machine_data():
 
 # Global variables start
 
-status='00-NO-LOGGED'
+status = '00-NO-LOGGED'
+check_alive_timer = None
 
 # Global variable to check if we have already found a technician or we need to keep searching
 alive = False
@@ -160,11 +168,14 @@ class HelpChannel(Tk):
         """
         Function to open connection between local vnc and remote vnc viewer 
         """
+        global subproc_tunnel, rest_request_errormsg, status
 
-        global subproc_tunnel, rest_request_errormsg
+        logging.info('Opening connection')
+        status = '01-LOGGED'
         
         tunnelscript = config_section_map("TunnelConfig")['command_full_path']  
         command = [tunnelscript]
+        logging.info('Starting tunnel...')
         subproc_tunnel = subprocess.Popen(command, bufsize=0, shell=False)
 
         command_full_path = config_section_map("x11vncConfig")['command_full_path']
@@ -176,10 +187,12 @@ class HelpChannel(Tk):
         command = [command_full_path, "-connect", connect_parameter]
 
         global subproc_vnc
+        logging.info('Starting x11vnc...')
         subproc_vnc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
-        	
+            
+        logging.info('Accepting the connection...')
         # Rest request to accept connection
-        ok, errormsg = do_rest_request('/help-channel-client/accept');
+        ok, errormsg = do_rest_request('/help-channel-client/accept')
         if not ok:
             showerror(_('Error'), _('Error accepting technician: %s')
                 % (errormsg))
@@ -252,6 +265,7 @@ class LoginFrame(Frame):
             ssl_context = ssl._create_unverified_context()
             
         try:
+            logging.info('Login: node=%s username=%s'%(node_id, username))
             # Login in the GECOS Control Center
             res = requests.post(url+'/help-channel-client/login', 
                 data={'node_id':node_id, 'username':username, 
@@ -276,6 +290,7 @@ class LoginFrame(Frame):
                 
         global connection_code
         connection_code = json_return['token']
+        logging.info('Login OK: connection code=%s'%(connection_code))
         
         if config_section_map("UserConfig")['show_technician'] == "True":
             controller.switch_frame(WaitTecFrame)
@@ -405,10 +420,18 @@ class EstablishedConnection(Frame):
         :param controller: Handler's frame
         :type controller: HelpChannel
         """
+        logging.info('Finish connection!')
+        status = '10-FINISHED'
 
         kill_x11()
-        do_rest_request('/help-channel-client/finish', {'finisher': 'user'})
+        
+        ok, errormsg = do_rest_request('/help-channel-client/finish', {'finisher': 'user'})
+        if not ok:
+            logging.error('Error in request: %s'%(errormsg))
+        
         app.destroy()
+        if check_alive_timer:
+            check_alive_timer.cancel()
 
     def check_alive(self, subproc_vnc, controller):
         """
@@ -417,24 +440,27 @@ class EstablishedConnection(Frame):
         :param subproc_vnc: Launched process by the application for handles the applicant's remote desktop
         :type subproc_vnc: subprocess
         """
+
+        logging.info('Checking if connection is alive...')
+        global check_alive_timer
+
         seconds = float(config_section_map("x11vncConfig")['polling_interval'])
 
-        if subproc_vnc.poll() == 0:
-            do_rest_request('/help-channel-client/finish', {'finisher': 'tech'})
-            controller.switch_frame(FinishedConnection)
+        if subproc_vnc.poll() is not None:
+            ok, errormsg = do_rest_request('/help-channel-client/finish', {'finisher': 'tech'})
+            if not ok:
+                logging.error('Error in request: %s'%(errormsg))
+            
+            showinfo(_('Alert'), _('Connection finished by technician'))
+            kill_x11()            
+            app.destroy()
+            sys.exit(0)
 
-        threading.Timer(seconds, self.check_alive, (subproc_vnc, controller,)).start()
+        check_alive_timer = threading.Timer(seconds, self.check_alive, (subproc_vnc, controller,))
+        check_alive_timer.start()
 
 
-class FinishedConnection(Frame):
-    def __init__(self, parent, controller):
-        Frame.__init__(self, parent)
-        self.controller=controller
 
-        label = Label(self, text=_('Connection finished'))
-#        label.pack()
-
-        self.pack()
 
 
 class CustomAskOkCancel:
@@ -444,6 +470,18 @@ class CustomAskOkCancel:
         top = self.top = Toplevel(parent)
         Label(top, text=label_message).pack()
         top.wm_title(window_title)
+
+        # Center in the screen
+        windowWidth = top.winfo_reqwidth()
+        windowHeight = top.winfo_reqheight()
+         
+        # Gets both half the screen width/height and window width/height
+        positionRight = int(top.winfo_screenwidth()/2 - windowWidth/2)
+        positionDown = int(top.winfo_screenheight()/2 - windowHeight/2)
+         
+        # Positions the window in the center of the page.
+        top.geometry("+{}+{}".format(positionRight, positionDown))
+
 
         bottom = Frame(top)
         bottom.pack(side=BOTTOM, fill=X, pady=(30, 0))
@@ -527,30 +565,44 @@ if __name__ == "__main__":
         """
         global closeDialogOpened
 
+        logging.info('Closing application...')
+        logging.debug('closeDialogOpened = %s'%(closeDialogOpened))
+        logging.debug('status = %s'%(status))
+
         if not closeDialogOpened:
-            if status > "00-NO-LOGIN":
+            if status > "00-NO-LOGGED":
                 closeDialogOpened = True
 
                 if custom_ask_ok_cancel(_('Close connection'), _('Ok'), _('Cancel'),
                                         _('Are you sure you want to abort the connection?')):
-                    do_rest_request('/help-channel-client/close')
-                    kill_x11()
+                    ok, errormsg = do_rest_request('/help-channel-client/finish', {'finisher': 'tech'})
+                    if not ok:
+                        logging.error('Error in request: %s'%(errormsg))
+
                     app.destroy()
+                    kill_x11()
+                    if check_alive_timer:
+                        check_alive_timer.cancel()
+                        
                     sys.exit(0)
                 else:
                     closeDialogOpened = False
             else:
 #                kill_x11()
                 app.destroy()
+                if check_alive_timer:
+                    check_alive_timer.cancel()
                 sys.exit(0)
-	else:
-		kill_x11()
-		app.destroy()
-		sys.exit(0)	
+        else:
+            kill_x11()
+            app.destroy()
+            if check_alive_timer:
+                check_alive_timer.cancel()
+            sys.exit(0)    
 
 
     app.protocol('WM_DELETE_WINDOW', on_closing)
     app.mainloop()  
     #app.destroy()
-    os._exit(1)	
+    os._exit(1)
     

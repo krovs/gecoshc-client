@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import pycos, socket, sys, ssl
+import pycos, socket, sys, ssl, os, signal
 import websocket
 import ConfigParser
 
@@ -28,7 +28,10 @@ def ws_send(conn,ws, task=None):
             break
         if not line:
             break
-        yield conn.send(line)        
+        yield conn.send(line)
+        
+    print('End of server tunnel!')
+    os.kill(os.getpid(), signal.SIGTERM)
 
 def client_send(conn,ws, task=None):
     task.set_daemon()
@@ -40,7 +43,10 @@ def client_send(conn,ws, task=None):
             break
         if not line:
             break
-        ws.send_binary(line)        
+        ws.send_binary(line)       
+        
+    print('End of client tunnel!')  
+    os.kill(os.getpid(), signal.SIGTERM)
 
 def hcwst(host, port,repeater_ws,proxy_host,proxy_port,proxy_username,proxy_password, ssl_verify, task=None):
 
