@@ -515,7 +515,7 @@ if __name__ == "__main__":
     if (not os.path.isfile('/etc/helpchannel.conf') or 
         not os.access('/etc/helpchannel.conf', os.R_OK)):
         # /etc/helpchannel.conf not found or not readable
-        showerror('Error', '/etc/helpchannel.conf not found at %s or is '\
+        showerror('Error', '/etc/helpchannel.conf not found or is '\
              'not readable. Please, check it and try again.')
         sys.exit(0)
         
