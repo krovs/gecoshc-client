@@ -24,7 +24,8 @@ def ws_send(conn,ws, task=None):
     while True:
         try:
             line = yield thread_pool.async_task(ws.recv)
-        except:
+        except Exception as ex:
+            print 'Error in server tunnel: %s'%(str(ex))
             break
         if not line:
             break
@@ -39,7 +40,8 @@ def client_send(conn,ws, task=None):
     while True:
         try:
             line = yield conn.recv(1024)	
-        except:
+        except Exception as ex:
+            print 'Error in client tunnel: %s'%(str(ex))
             break
         if not line:
             break

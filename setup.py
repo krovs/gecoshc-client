@@ -75,25 +75,6 @@ def update_desktop_file(datadir):
         print ("ERROR: Can't find helpchannel.desktop")
         sys.exit(1)
 
-
-def update_conf_file(binpath):
-
-    try:
-        fin = file('helpchannel.conf', 'r')
-        fout = file(fin.name + '.new', 'w')
-
-        for line in fin:
-            if 'command_full_path:' in line:
-                line = "command_full_path: %s\n" % (binpath + 'hctunnel.py')
-            fout.write(line)
-        fout.flush()
-        fout.close()
-        fin.close()
-        os.rename(fout.name, fin.name)
-    except (OSError, IOError), e:
-        print ("ERROR: Can't find helpchannel.conf")
-        sys.exit(1)
-
 def update_bin_script(datadir):
 
     try:
@@ -112,24 +93,6 @@ def update_bin_script(datadir):
         print ("ERROR: Can't find helpchannel script")
         sys.exit(1)
 
-def update_conf_file(binpath):
-
-    try:
-        fin = file('helpchannel.conf', 'r')
-        fout = file(fin.name + '.new', 'w')
-
-        for line in fin:
-            if 'command_full_path:' in line:
-                line = "command_full_path: %s\n" % (binpath + 'hctunnel.py')
-            fout.write(line)
-        fout.flush()
-        fout.close()
-        fin.close()
-        os.rename(fout.name, fin.name)
-    except (OSError, IOError), e:
-        print ("ERROR: Can't find helpchannel.conf")
-        sys.exit(1)
-
 def copy_pages(pages_path):
     pass
 
@@ -137,7 +100,6 @@ def copy_pages(pages_path):
 class InstallAndUpdateDataDirectory(DistUtilsExtra.auto.install_auto):
     def run(self):
         update_desktop_file(self.prefix + '/share/helpchannel/')
-        update_conf_file(self.prefix + '/bin/')
         update_bin_script(self.prefix + '/share/helpchannel')
         DistUtilsExtra.auto.install_auto.run(self)
         os.system('find %s -type f -exec chmod 644 \\{\\} \\;'%(self.prefix + '/share/helpchannel'))

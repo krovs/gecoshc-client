@@ -23,7 +23,7 @@ import logging
 
 logging.basicConfig(level=logging.DEBUG)
 
-BASE_DIR = os.path.dirname(os.path.realpath(__file__))
+BASE_DIR = '/usr/share/helpchannel'
 
 config = ConfigParser.ConfigParser()
 
@@ -89,10 +89,12 @@ def do_rest_request(url, params={}):
 
 def kill_x11():
     logging.info('Killing tunnel and x11vnc')
-    if subproc is not None and  subproc.poll() is None:
-        subproc.kill()
+    if subproc_vnc is not None and  subproc_vnc.poll() is None:
+        logging.debug('Killing x11vnc...')
+        subproc_vnc.kill()
 
     if subproc_tunnel is not None and  subproc_tunnel.poll() is None:
+        logging.debug('Killing hctunnel...')
         subproc_tunnel.kill()
     logging.info('Tunnel and x11vnc process killed')    
 
@@ -452,6 +454,16 @@ class EstablishedConnection(Frame):
                 logging.error('Error in request: %s'%(errormsg))
             
             showinfo(_('Alert'), _('Connection finished by technician'))
+            kill_x11()            
+            app.destroy()
+            sys.exit(0)
+            
+        if subproc_tunnel.poll() is not None:
+            ok, errormsg = do_rest_request('/help-channel-client/finish', {'finisher': 'error'})
+            if not ok:
+                logging.error('Error in request: %s'%(errormsg))
+            
+            showinfo(_('Alert'), _('Connection finished by communication error'))
             kill_x11()            
             app.destroy()
             sys.exit(0)
