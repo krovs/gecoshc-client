@@ -1,42 +1,37 @@
-# Help-Channel-Client
+# gecoshc-client
+Help Channel client for GECOS workstations.
 
-Para el uso de este cliente se deben tener credenciales de acceso de usuario registrado ya en el servidor.
-La funcionalidad de este cliente es la siguiente:
-- Registrarse en el sistema con los datos de usuario.
-- Lanzar una solicitud de asistencia.
-- Aceptar o rechazar la respuesta de asistencia del técnico.
-- Finalizar la realización de la asistencia en cualquier momento.
+This Help Channel client validates the workstation against the GECOS CC and then connects to the appropiate Help Channel Server (basically a UVNC Repeater) by using x11vnc.
 
-El cliente que realiza la tarea anterior está realizado en Python, su GUI usando las libreras Qt.
-La comunicación con el servidor se realiza mediante servicios web de tipo REST para las tareas de gestión.
-La comunicación entre el servidor X11VNC y el servidor se realiza tunelizando la comunicación a través de WebSockets. TCP sobre HTTPS.
+# Relathionship with other projects
+This project includes:
+* websocket-client 0.47.0 (https://pypi.python.org/pypi/websocket-client/)
+* pycos 4.6.5 (https://pypi.python.org/pypi/pycos)
 
-Es posible usar cualquier servidor VNC que soporte conexiones en modo repetidor, no tiene que ser forzósamente X11VNC.
+This project is part of the GECOS environment.
 
-Los parámetros a configurar son los siguientes:
+# Building
+To build this project in a Debian system execute:
+``
+dpkg-buildpackage -us -uc
+``
 
+# Installing
+To install this project use the DEB package by:
+``
+sudo dpkg -i gecosws-hc-client_<version>_all.deb 
+sudo apt-get -f install
+``
 
-El script crea un socket local de escucha al que se conecta el X11VNC en modo repetidor y dicha comunicación es enviada al Websocket del servidor que comunica con la parte servidor del repetidor.
+# Configuring
+After installing is important to configure the client by editing /etc/helpchannel.conf file.
+The most important thing to configure is the Help Channel server URL (tunnel_url):
+```
+[TunnelConfig]
+command_full_path: /usr/bin/hctunnel.py
+tunnel_url: wss://helpchannel.yourdomain.com/wsServer
+local_port=6000
+ssl_verify=False
+```
 
-websocket-client 0.47.0 
-
-    https://pypi.python.org/pypi/websocket-client/ 
-    
-    
-pycos 4.6.5
-
-https://pypi.python.org/pypi/pycos
-
-
-La interfaz gráfica usada es Tkinter, apt-get install python-tk (debian)
-
-    
-x11vnc: a VNC server for real X displays 
-
-    http://www.karlrunge.com/x11vnc/
-
-En la carpeta Node Test Client hay un script de node cuyo funcionamiento es el mismo sin GUI para Node
-
-Licensed under the EUPL V.1.1
-
-The license text is available at http://www.osor.eu/eupl
+If your SSL certificates are valid (not self-signed certificates) you may set "ssl_verify=True".
