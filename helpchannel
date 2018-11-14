@@ -28,6 +28,7 @@ BASE_DIR = '/usr/share/helpchannel'
 config = ConfigParser.ConfigParser()
 
 subproc = None
+ssl_context = None
 
 
 # Function to get dictionary with the values of one section of the configuration file
@@ -69,7 +70,11 @@ def do_rest_request(url, params={}):
     ok = False
     message = ''
     try:
-        response = urllib2.urlopen(build_rest_url(url, params), context=ssl_context)
+        if ssl_context is not None:
+            response = urllib2.urlopen(build_rest_url(url, params), context=ssl_context)
+        else:
+            response = urllib2.urlopen(build_rest_url(url, params))
+        
         if response.getcode() == 200:
             ok = True
             contents = response.read()
@@ -261,10 +266,11 @@ class LoginFrame(Frame):
             ['True', 'true', '1', 't', 'y', 'yes'])
             
         global ssl_context
-        if ssl_verify:
-            ssl_context = ssl.create_default_context()
-        else:
-            ssl_context = ssl._create_unverified_context()
+        if '_create_unverified_context' in dir(ssl):
+            if ssl_verify:
+                ssl_context = ssl.create_default_context()
+            else:
+                ssl_context = ssl._create_unverified_context()
             
         try:
             logging.info('Login: node=%s username=%s'%(node_id, username))
@@ -342,7 +348,10 @@ class WaitTecFrame(Frame):
         """
 
         req_url = build_rest_url('/help-channel-client/reject')
-        json_return = json.load(urllib2.urlopen(req_url, context=ssl_context))
+        if ssl_context is not None:
+            json_return = json.load(urllib2.urlopen(req_url, context=ssl_context))
+        else:
+            json_return = json.load(urllib2.urlopen(req_url))
 
         if json_return["status"] == "success":
 
@@ -365,7 +374,10 @@ class WaitTecFrame(Frame):
 
         req_url = build_rest_url('/help-channel-client/fetch')
 
-        json_return = json.load(urllib2.urlopen(req_url, context=ssl_context))
+        if ssl_context is not None:
+            json_return = json.load(urllib2.urlopen(req_url, context=ssl_context))
+        else:
+            json_return = json.load(urllib2.urlopen(req_url))
 
         if ((not 'ok' in json_return) or (not json_return['ok'])):
             errormsg = 'NO JSON data'
@@ -548,7 +560,7 @@ if __name__ == "__main__":
     if (not os.path.isfile('/etc/gcc.control') or 
         not os.access('/etc/gcc.control', os.R_OK)):
         # gcc.control not found or not readable
-        showerror(_('Error'), _('gcc.control not found at %s or is '\
+        showerror(_('Error'), _('gcc.control not found or is '\
              'not readable. Please, check it and try again.'))
         sys.exit(0)    
     
@@ -556,7 +568,7 @@ if __name__ == "__main__":
     if (not os.path.isfile('/etc/chef/client.pem') or 
         not os.access('/etc/chef/client.pem', os.R_OK)):
         # /etc/chef/client.pem not found or not readable
-        showerror(_('Error'), _('/etc/chef/client.pem not found at %s or is '\
+        showerror(_('Error'), _('/etc/chef/client.pem not found or is '\
              'not readable. Please, check it and try again.'))
         sys.exit(0)        
     

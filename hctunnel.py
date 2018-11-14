@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import pycos, socket, sys, ssl, os, signal
+import pycos, socket, sys, ssl, os, signal, time
 import websocket
 import ConfigParser
 
@@ -119,9 +119,5 @@ if __name__ == '__main__':
     else:
         read_input = raw_input
     while True:
-        try:
-            cmd = read_input('Pulsa "quit" o "exit" para salir: ').strip().lower()
-            if cmd.strip().lower() in ('quit', 'exit'):
-                break   
-        except:
-            break
+        # Sleep for one minute
+        time.sleep(60)
