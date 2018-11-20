@@ -455,7 +455,7 @@ if __name__ == "__main__":
     language = config_section_map("i18nConfig")['language'] or 'es'
 
     try:
-        lang = gettext.translation('helpchannel', localedir=BASE_DIR + '/locale', languages=[language])
+        lang = gettext.translation('helpchannel', languages=[language])
         lang.install(unicode=1)    
     except IOError:
         print "No translations available"
