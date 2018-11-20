@@ -121,9 +121,7 @@ closeDialogOpened = False
 # REST connection parameters
 connection_code = ""
 
-known_message = 'En un lugar de la Mancha, de cuyo nombre no quiero acordarme,'\
-    ' no ha mucho tiempo que vivía un hidalgo de los de lanza en astillero, '\
-    'adarga antigua, rocín flaco y galgo corredor.'
+known_message = ''
 
 
 
@@ -542,11 +540,25 @@ if __name__ == "__main__":
     language = config_section_map("i18nConfig")['language'] or 'es'
 
     try:
-        lang = gettext.translation(language, localedir=BASE_DIR + '/locale', languages=[language])
+        lang = gettext.translation('helpchannel', localedir=BASE_DIR + '/locale', languages=[language])
+        lang.install(unicode=1)    
     except IOError:
         print "No translations available"
+        _ = gettext.gettext
+
+
+    # Get known message
+    if (config_section_map("ServerConfig") 
+        and 'known_message' in config_section_map("ServerConfig")):
+        known_message = config_section_map("ServerConfig")['known_message']
+        
+    if not known_message or len(known_message.strip()) <= 0:
+        # Known message not specified
+        showerror(_('Error'), _('Known message not specified. Please, check it and '\
+            'try again.'))
+        sys.exit(0)
     
-    lang.install(unicode=1)    
+    
 
     # Check x11vnc
     x11vnc_path = config_section_map("x11vncConfig")['command_full_path']
