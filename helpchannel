@@ -20,6 +20,7 @@ from Crypto.PublicKey import RSA
 import requests
 import ssl
 import logging
+import signal
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -29,6 +30,15 @@ config = ConfigParser.ConfigParser()
 
 subproc = None
 ssl_context = None
+
+
+def handler(signum, frame):
+    logging.info('Signal handler called with signal: %s'%(signum))
+    app._frame.label.config(text=_('A technician is controlling your session'))
+    return
+
+# Set SIGUSR signal handler
+signal.signal(signal.SIGUSR1, handler)
 
 
 # Function to get dictionary with the values of one section of the configuration file
@@ -123,7 +133,7 @@ connection_code = ""
 
 known_message = ''
 
-
+end_loop = False
 
 # Global variables end
 
@@ -189,7 +199,9 @@ class HelpChannel(Tk):
 
         connect_parameter = "repeater=ID:%s+%s:%s" % (connection_code, repeater, port,)
 
-        command = [command_full_path, "-connect", connect_parameter]
+        command = [command_full_path,
+            "-afteraccept","/bin/kill -SIGUSR1 %s"%(os.getpid()),
+            "-connect", connect_parameter]
 
         global subproc_vnc
         logging.info('Starting x11vnc...')
@@ -315,9 +327,9 @@ class EstablishedConnection(Frame):
 
         self.check_alive(subproc_vnc, controller)
 
-        label = Label(self, text=_('Connection stablished'), bg="white")
+        self.label = Label(self, text=_('Connection stablished'), bg="white")
 
-        label.pack(side=LEFT, fill=BOTH, expand=True)
+        self.label.pack(side=LEFT, fill=BOTH, expand=True)
 
         finish_button = Button(self, text=_('Shut off connection'), command=lambda: self.finish_connection(controller, ))
         finish_button.pack(in_=bottom, side=LEFT, fill=BOTH, expand=True)
@@ -353,7 +365,7 @@ class EstablishedConnection(Frame):
         """
 
         logging.info('Checking if connection is alive...')
-        global check_alive_timer
+        global check_alive_timer, end_loop
 
         seconds = float(config_section_map("x11vncConfig")['polling_interval'])
 
@@ -362,7 +374,9 @@ class EstablishedConnection(Frame):
             if not ok:
                 logging.error('Error in request: %s'%(errormsg))
             
-            showinfo(_('Alert'), _('Connection finished by technician'))
+            end_loop = True
+            time.sleep(0.2)
+            showinfo(_('Alert'), _('Connection finished by technician'), parent=app)
             kill_x11()            
             app.destroy()
             sys.exit(0)
@@ -372,7 +386,9 @@ class EstablishedConnection(Frame):
             if not ok:
                 logging.error('Error in request: %s'%(errormsg))
             
-            showinfo(_('Alert'), _('Connection finished by communication error'))
+            end_loop = True
+            time.sleep(0.2)
+            showinfo(_('Alert'), _('Connection finished by communication error'), parent=app)
             kill_x11()            
             app.destroy()
             sys.exit(0)
@@ -537,7 +553,16 @@ if __name__ == "__main__":
 
 
     app.protocol('WM_DELETE_WINDOW', on_closing)
-    app.mainloop()  
-    #app.destroy()
+    while not end_loop:
+        try:
+            app.update_idletasks()
+            app.update()
+            time.sleep(0.1)
+        except:
+            os._exit(1)
+
+    # In Tk.mainloop the signal processing is really slow
+    # but when "showinfo" is used in a different thread it needs mainloop 
+    app.mainloop() 
     os._exit(1)
     
