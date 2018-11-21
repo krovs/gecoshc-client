@@ -31,7 +31,7 @@ import glob
 try:
     import DistUtilsExtra.auto
     from distutils.core import setup, Command
-    from DistUtilsExtra.command import *
+    from DistUtilsExtra.command import build_i18n, build_extra
 except ImportError:
     print >> sys.stderr, 'To build HelpChannelClient you need https://launchpad.net/python-distutils-extra'
     sys.exit(1)
@@ -123,7 +123,7 @@ class Clean(Command):
     def run(self):
         assert os.getcwd() == self.cwd, 'Must be in package root: %s' % self.cwd
         os.system('rm -rf ./build ./dist')
-        update_data_path(prefix, oldvalue)
+
 
 
        

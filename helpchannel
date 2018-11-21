@@ -20,6 +20,7 @@ from Crypto.PublicKey import RSA
 import requests
 import ssl
 import logging
+import signal
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -29,6 +30,15 @@ config = ConfigParser.ConfigParser()
 
 subproc = None
 ssl_context = None
+
+
+def handler(signum, frame):
+    logging.info('Signal handler called with signal: %s'%(signum))
+    app._frame.label.config(text=_('A technician is controlling your session'))
+    return
+
+# Set SIGUSR signal handler
+signal.signal(signal.SIGUSR1, handler)
 
 
 # Function to get dictionary with the values of one section of the configuration file
@@ -121,11 +131,9 @@ closeDialogOpened = False
 # REST connection parameters
 connection_code = ""
 
-known_message = 'En un lugar de la Mancha, de cuyo nombre no quiero acordarme,'\
-    ' no ha mucho tiempo que vivía un hidalgo de los de lanza en astillero, '\
-    'adarga antigua, rocín flaco y galgo corredor.'
+known_message = ''
 
-
+end_loop = False
 
 # Global variables end
 
@@ -191,7 +199,9 @@ class HelpChannel(Tk):
 
         connect_parameter = "repeater=ID:%s+%s:%s" % (connection_code, repeater, port,)
 
-        command = [command_full_path, "-connect", connect_parameter]
+        command = [command_full_path,
+            "-afteraccept","/bin/kill -SIGUSR1 %s"%(os.getpid()),
+            "-connect", connect_parameter]
 
         global subproc_vnc
         logging.info('Starting x11vnc...')
@@ -300,108 +310,7 @@ class LoginFrame(Frame):
         connection_code = json_return['token']
         logging.info('Login OK: connection code=%s'%(connection_code))
         
-        if config_section_map("UserConfig")['show_technician'] == "True":
-            controller.switch_frame(WaitTecFrame)
-        else:
-            controller.open_connection()
-
-
-class WaitTecFrame(Frame):
-    """
-    Class that represent the 'Waiting technicians' screen
-    """
-
-    def __init__(self, parent, controller):
-        Frame.__init__(self, parent)
-        self.controller=controller
-
-        global alive
-        alive = True
-
-        label = Label(self, text=_('Help request waiting for a technician...'))
-        label.pack()
-
-        bottom = Frame(self)
-        bottom.pack(side=BOTTOM, fill=X)
-
-        self.work(bottom, label)
-
-        accept_button = Button(self, text=_('Accept'), command=lambda: controller.open_connection())
-        accept_button.pack(in_=bottom, side=LEFT, fill=BOTH, expand=True)
-
-        refuse_button = Button(self, text=_('Reject'), command=lambda: self.search_again(bottom, label))
-        refuse_button.pack(in_=bottom, side=LEFT, fill=BOTH, expand=True)
-
-        self.pack()
-
-
-
-
-
-    def search_again(self, button_frame, label):
-        """
-        This method searches technicians again when user refused a request.
-        :param button_frame: Container of buttons 'Accept' and 'Refuse'
-        :type button_frame: tk.Frame
-        :param label: Text with the message 'Waiting technicians...'
-        :type label: tk.Label
-        """
-
-        req_url = build_rest_url('/help-channel-client/reject')
-        if ssl_context is not None:
-            json_return = json.load(urllib2.urlopen(req_url, context=ssl_context))
-        else:
-            json_return = json.load(urllib2.urlopen(req_url))
-
-        if json_return["status"] == "success":
-
-            global alive
-            alive = True
-            self.work(button_frame, label)
-
-        label.config(text=_('Help request waiting for a technician...'))
-
-        button_frame.pack_forget()
-
-    def work(self, buttonsFrame, label):
-        """
-        This method searches available technicians every 'polling_interval' (check config.ini) seconds.
-        :param buttonsFrame: Container of buttons 'Accept' and 'Refuse'
-        :type buttonsFrame: tk.Frame
-        :param label: Text with the message 'Waiting technicians...'
-        :type label: tk.Label
-        """
-
-        req_url = build_rest_url('/help-channel-client/fetch')
-
-        if ssl_context is not None:
-            json_return = json.load(urllib2.urlopen(req_url, context=ssl_context))
-        else:
-            json_return = json.load(urllib2.urlopen(req_url))
-
-        if ((not 'ok' in json_return) or (not json_return['ok'])):
-            errormsg = 'NO JSON data'
-            if 'message' in json_return:
-                errormsg = json_return['message']
-
-            showerror(_('Error'), _('Error fetching technician: %s')
-                % (errormsg))
-            sys.exit(0)
-
-        has_tech = json_return['has_tech']
-        tech_name = json_return['tech_name']
-        polling_interval = config_section_map("ServerConfig")['polling_interval']
-
-        if not has_tech:
-            buttonsFrame.pack_forget()
-        else:
-            global alive
-            alive = False
-            buttonsFrame.pack(side=BOTTOM, fill=X)
-            label.config(text=tech_name + ' ' + _("wants to help you"))
-
-        if alive:
-            threading.Timer(float(polling_interval), self.work, (buttonsFrame, label)).start()
+        controller.open_connection()
 
 
 class EstablishedConnection(Frame):
@@ -418,9 +327,9 @@ class EstablishedConnection(Frame):
 
         self.check_alive(subproc_vnc, controller)
 
-        label = Label(self, text=_('Connection stablished'), bg="white")
+        self.label = Label(self, text=_('Connection stablished'), bg="white")
 
-        label.pack(side=LEFT, fill=BOTH, expand=True)
+        self.label.pack(side=LEFT, fill=BOTH, expand=True)
 
         finish_button = Button(self, text=_('Shut off connection'), command=lambda: self.finish_connection(controller, ))
         finish_button.pack(in_=bottom, side=LEFT, fill=BOTH, expand=True)
@@ -456,7 +365,7 @@ class EstablishedConnection(Frame):
         """
 
         logging.info('Checking if connection is alive...')
-        global check_alive_timer
+        global check_alive_timer, end_loop
 
         seconds = float(config_section_map("x11vncConfig")['polling_interval'])
 
@@ -465,7 +374,9 @@ class EstablishedConnection(Frame):
             if not ok:
                 logging.error('Error in request: %s'%(errormsg))
             
-            showinfo(_('Alert'), _('Connection finished by technician'))
+            end_loop = True
+            time.sleep(0.2)
+            showinfo(_('Alert'), _('Connection finished by technician'), parent=app)
             kill_x11()            
             app.destroy()
             sys.exit(0)
@@ -475,7 +386,9 @@ class EstablishedConnection(Frame):
             if not ok:
                 logging.error('Error in request: %s'%(errormsg))
             
-            showinfo(_('Alert'), _('Connection finished by communication error'))
+            end_loop = True
+            time.sleep(0.2)
+            showinfo(_('Alert'), _('Connection finished by communication error'), parent=app)
             kill_x11()            
             app.destroy()
             sys.exit(0)
@@ -542,11 +455,25 @@ if __name__ == "__main__":
     language = config_section_map("i18nConfig")['language'] or 'es'
 
     try:
-        lang = gettext.translation(language, localedir=BASE_DIR + '/locale', languages=[language])
+        lang = gettext.translation('helpchannel', languages=[language])
+        lang.install(unicode=1)    
     except IOError:
         print "No translations available"
+        _ = gettext.gettext
+
+
+    # Get known message
+    if (config_section_map("ServerConfig") 
+        and 'known_message' in config_section_map("ServerConfig")):
+        known_message = config_section_map("ServerConfig")['known_message']
+        
+    if not known_message or len(known_message.strip()) <= 0:
+        # Known message not specified
+        showerror(_('Error'), _('Known message not specified. Please, check it and '\
+            'try again.'))
+        sys.exit(0)
     
-    lang.install(unicode=1)    
+    
 
     # Check x11vnc
     x11vnc_path = config_section_map("x11vncConfig")['command_full_path']
@@ -626,7 +553,16 @@ if __name__ == "__main__":
 
 
     app.protocol('WM_DELETE_WINDOW', on_closing)
-    app.mainloop()  
-    #app.destroy()
+    while not end_loop:
+        try:
+            app.update_idletasks()
+            app.update()
+            time.sleep(0.1)
+        except:
+            os._exit(1)
+
+    # In Tk.mainloop the signal processing is really slow
+    # but when "showinfo" is used in a different thread it needs mainloop 
+    app.mainloop() 
     os._exit(1)
     
