@@ -1,6 +1,6 @@
-gecosws-hc-client (1.0.0) 1-0-staging; urgency=low
+gecosws-hc-client (1.0.1) 1-0-staging; urgency=low
 
-  * New release: GECOS Help Channel Client 1.0.0
+  * New postrm script
 
- -- Abraham Macias <amacias@solutia-it.es>  Wed, 14 Nov 2018 12:00:00 +0100
+ -- Gecos Team <gecos@guadalinex.org> Wed, 12 Feb 2019 12:00:00 +0100
 
