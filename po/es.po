@@ -1,0 +1,90 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR ORGANIZATION
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: PACKAGE VERSION\n"
+"POT-Creation-Date: 2018-11-20 17:15+CET\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: pygettext.py 1.5\n"
+
+
+#: helpchannel:37
+msgid "A technician is controlling your session"
+msgstr "Un técnico está controlando su sesión"
+
+#: helpchannel:214
+msgid "Error accepting technician: %s"
+msgstr "Error aceptando técnico: %s"
+
+#: helpchannel:214 helpchannel:296 helpchannel:305 helpchannel:472
+#: helpchannel:482 helpchannel:490 helpchannel:498
+msgid "Error"
+msgstr "Error"
+
+#: helpchannel:236
+msgid "Connecting to GECOS Control Center..."
+msgstr "Conectando al Centro de Control GECOS..."
+
+#: helpchannel:240 helpchannel:527
+msgid "Cancel"
+msgstr "Cancelar"
+
+#: helpchannel:296 helpchannel:305
+msgid "Error login in GECOS Control Center: %s"
+msgstr "Error al logarse contra el Centro de Control GECOS: %s"
+
+#: helpchannel:330
+msgid "Connection stablished"
+msgstr "Conexión establecida"
+
+#: helpchannel:334
+msgid "Shut off connection"
+msgstr "Cerrar conexión"
+
+#: helpchannel:379
+msgid "Connection finished by technician"
+msgstr "Conexión finalizada por el técnico"
+
+#: helpchannel:379 helpchannel:391
+msgid "Alert"
+msgstr "Alerta"
+
+#: helpchannel:391
+msgid "Connection finished by communication error"
+msgstr "Conexión finalizada por error de comunicación"
+
+#: helpchannel:472
+msgid "Known message not specified. Please, check it and try again."
+msgstr "Mensaje conocido no especificado. Por favor reviselo y pruebe de nuevo."
+
+#: helpchannel:482
+msgid "x11vnc not found at %s. Please, check it and try again."
+msgstr "x11vnc no encontrado en %s. Por favor reviselo y pruebe de nuevo"
+
+#: helpchannel:490
+msgid "gcc.control not found or is not readable. Please, check it and try again."
+msgstr "No se encuentra el fichero gcc.control o no es legible. Por favor reviselo y pruebe de nuevo."
+
+#: helpchannel:498
+msgid "/etc/chef/client.pem not found or is not readable. Please, check it and try again."
+msgstr "El fichero /etc/chef/client.pem no se encuentra o no es legible. Por favor reviselo y pruebe de nuevo."
+
+#: helpchannel:527
+msgid "Close connection"
+msgstr "Cerrar conexión"
+
+#: helpchannel:527
+msgid "Ok"
+msgstr "Ok"
+
+#: helpchannel:528
+msgid "Are you sure you want to abort the connection?"
+msgstr "¿Está seguro de que desea abortar la conexión?"
+

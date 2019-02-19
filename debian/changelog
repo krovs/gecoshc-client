@@ -1,0 +1,6 @@
+gecosws-hc-client (1.0.1) 1-0-staging; urgency=low
+
+  * New postrm script
+
+ -- Gecos Team <gecos@guadalinex.org> Wed, 12 Feb 2019 12:00:00 +0100
+

@@ -1,0 +1,568 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+from Tkinter import *
+import json
+import subprocess
+import threading
+from tkMessageBox import showerror, showinfo
+import urllib2
+import ConfigParser
+import gettext
+import platform
+import os
+import os.path
+import urllib
+import time
+import logging
+import getpass
+from Crypto.PublicKey import RSA
+import requests
+import ssl
+import logging
+import signal
+
+logging.basicConfig(level=logging.DEBUG)
+
+BASE_DIR = '/usr/share/helpchannel'
+
+config = ConfigParser.ConfigParser()
+
+subproc = None
+ssl_context = None
+
+
+def handler(signum, frame):
+    logging.info('Signal handler called with signal: %s'%(signum))
+    app._frame.label.config(text=_('A technician is controlling your session'))
+    return
+
+# Set SIGUSR signal handler
+signal.signal(signal.SIGUSR1, handler)
+
+
+# Function to get dictionary with the values of one section of the configuration file
+def config_section_map(section):
+    dict1 = {}
+    options = config.options(section)
+    for option in options:
+        try:
+            dict1[option] = config.get(section, option)
+        except:
+            dict1[option] = None
+    return dict1
+
+
+def build_rest_url(relative_path, params={}):
+    """
+    Builds a valid REST URI
+
+    :param relative_path: The relative path to the REST service
+    :type params: A dictionary of parameters to be set in the URI. Default empty
+    """
+    url_params = {'connection_code': connection_code}
+    url_params.update(params)
+
+    encoded_params = urllib.urlencode(url_params)
+
+    return rest_base + relative_path + '?' + encoded_params
+
+
+def do_rest_request(url, params={}):
+    """
+    Performs a REST request
+
+    :param url: the relative url
+    """
+    
+    logging.info('REQUEST: %s'%(url))
+    
+    ok = False
+    message = ''
+    try:
+        if ssl_context is not None:
+            response = urllib2.urlopen(build_rest_url(url, params), context=ssl_context)
+        else:
+            response = urllib2.urlopen(build_rest_url(url, params))
+        
+        if response.getcode() == 200:
+            ok = True
+            contents = response.read()
+            contents = json.loads(contents)
+            if 'message' in contents:
+                message = contents['message']
+    
+            if 'ok' in contents:
+                ok = contents['ok']
+    
+    except urllib2.HTTPError as err:
+        ok = False
+        message = str(err)
+
+    return (ok, message)
+
+
+def kill_x11():
+    logging.info('Killing tunnel and x11vnc')
+    if subproc_vnc is not None and  subproc_vnc.poll() is None:
+        logging.debug('Killing x11vnc...')
+        subproc_vnc.kill()
+
+    if subproc_tunnel is not None and  subproc_tunnel.poll() is None:
+        logging.debug('Killing hctunnel...')
+        subproc_tunnel.kill()
+    logging.info('Tunnel and x11vnc process killed')    
+
+
+def get_machine_data():
+        return (('processor',platform.processor()),('system-data',platform.linux_distribution()))
+
+
+
+# Global variables start
+
+status = '00-NO-LOGGED'
+check_alive_timer = None
+
+# Global variable to check if we have already found a technician or we need to keep searching
+alive = False
+closeDialogOpened = False
+
+# REST connection parameters
+connection_code = ""
+
+known_message = ''
+
+end_loop = False
+
+# Global variables end
+
+
+# Set default locale
+language = 'es'
+
+
+class HelpChannel(Tk):
+    """
+    Main application class. It's responsible for showing user dialogs.
+    """
+
+    def __init__(self, *args, **kwargs):
+        Tk.__init__(self)
+
+        self.container = Frame(self)
+        self.container.pack(side="top", fill="both", expand=True,padx=10,pady=10)
+        self.container.grid_rowconfigure(0, weight=1)
+        self.container.grid_columnconfigure(0, weight=1)
+
+        # Center in the screen
+        windowWidth = self.winfo_reqwidth()
+        windowHeight = self.winfo_reqheight()
+         
+        # Gets both half the screen width/height and window width/height
+        positionRight = int(self.winfo_screenwidth()/2 - windowWidth/2)
+        positionDown = int(self.winfo_screenheight()/2 - windowHeight/2)
+         
+        # Positions the window in the center of the page.
+        self.geometry("+{}+{}".format(positionRight, positionDown))
+
+        self.wm_title("Help Channel")
+
+        self._frame = LoginFrame(parent=self.container, controller=self)
+        self._frame.do_login(self)
+
+
+    def switch_frame(self, frame_class):
+        """Destroys current frame and replaces it with a new one."""
+        new_frame = frame_class(parent=self.container, controller=self)
+        self._frame.destroy()
+        self._frame = new_frame
+
+
+    def open_connection(self):
+        """
+        Function to open connection between local vnc and remote vnc viewer 
+        """
+        global subproc_tunnel, rest_request_errormsg, status
+
+        logging.info('Opening connection')
+        status = '01-LOGGED'
+        
+        tunnelscript = config_section_map("TunnelConfig")['command_full_path']  
+        command = [tunnelscript]
+        logging.info('Starting tunnel...')
+        subproc_tunnel = subprocess.Popen(command, bufsize=0, shell=False)
+
+        command_full_path = config_section_map("x11vncConfig")['command_full_path']
+        repeater = config_section_map("x11vncConfig")['remote_repeater']
+        port = config_section_map("x11vncConfig")['remote_port']
+
+        connect_parameter = "repeater=ID:%s+%s:%s" % (connection_code, repeater, port,)
+
+        command = [command_full_path,
+            "-afteraccept","/bin/kill -SIGUSR1 %s"%(os.getpid()),
+            "-connect", connect_parameter]
+
+        global subproc_vnc
+        logging.info('Starting x11vnc...')
+        subproc_vnc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+            
+        logging.info('Accepting the connection...')
+        # Rest request to accept connection
+        ok, errormsg = do_rest_request('/help-channel-client/accept')
+        if not ok:
+            showerror(_('Error'), _('Error accepting technician: %s')
+                % (errormsg))
+            kill_x11()
+            sys.exit(0)
+
+        global alive
+        alive = False
+        self.switch_frame(EstablishedConnection)
+
+
+class LoginFrame(Frame):
+    """
+    Class that represent the 'Login' screen
+    """
+
+    def __init__(self, parent, controller):
+        Frame.__init__(self, parent)
+        self.controller=controller
+
+        bottom = Frame(self)
+        bottom.pack(side=BOTTOM, fill=X)
+
+        label = Label(self, text=_('Connecting to GECOS Control Center...'), bg="white")
+
+        label.pack(side=LEFT, fill=BOTH, expand=True)
+
+        finish_button = Button(self, text=_('Cancel'), command=lambda: self.cancel(controller, ))
+        finish_button.pack(in_=bottom, side=LEFT, fill=BOTH, expand=True)
+
+        self.pack()
+
+    def cancel(self, controller):
+        sys.exit(0)
+
+
+    def do_login(self, controller):
+        
+        # Read /etc/gcc.control file
+        gcc_control_json = []
+        with file('/etc/gcc.control') as gcc_control:
+            content = gcc_control.read()
+            gcc_control_json = json.loads(content)
+
+        # Read /etc/chef/client.pem file
+        client_pem = []
+        with file('/etc/chef/client.pem') as client_f:
+            client_pem = client_f.read()
+            
+        # Encrypt known message
+        private_key = RSA.importKey(client_pem)
+        encrypted = private_key.decrypt(known_message).encode('hex')   
+        
+        global rest_base
+        rest_base = gcc_control_json['uri_gcc']
+        
+        hc_server = config_section_map('TunnelConfig')['tunnel_url']
+        username = getpass.getuser()
+        url = gcc_control_json['uri_gcc']
+        node_id = gcc_control_json['gcc_nodename']
+        gcc_username = gcc_control_json['gcc_username']
+        json_return = {}
+        ssl_verify = (config_section_map("ServerConfig")['ssl_verify'] in 
+            ['True', 'true', '1', 't', 'y', 'yes'])
+            
+        global ssl_context
+        if '_create_unverified_context' in dir(ssl):
+            if ssl_verify:
+                ssl_context = ssl.create_default_context()
+            else:
+                ssl_context = ssl._create_unverified_context()
+            
+        try:
+            logging.info('Login: node=%s username=%s'%(node_id, username))
+            # Login in the GECOS Control Center
+            res = requests.post(url+'/help-channel-client/login', 
+                data={'node_id':node_id, 'username':username, 
+                    'gcc_username': gcc_username, 'secret':encrypted,
+                    'hc_server': hc_server}, verify=ssl_verify)
+            if res.ok:
+                json_return = res.json()
+
+        except Exception as e:
+            showerror(_('Error'), _('Error login in GECOS Control Center: %s')
+                % (str(e)))
+            sys.exit(0)
+            
+        if not res.ok or not json_return['ok']:
+            errormsg = 'NO JSON data'
+            if 'message' in json_return:
+                errormsg = json_return['message']
+
+            showerror(_('Error'), _('Error login in GECOS Control Center: %s')
+                % (errormsg))
+            sys.exit(0)
+                
+        global connection_code
+        connection_code = json_return['token']
+        logging.info('Login OK: connection code=%s'%(connection_code))
+        
+        controller.open_connection()
+
+
+class EstablishedConnection(Frame):
+    """
+    Class that represent the 'Established connection' screen
+    """
+
+    def __init__(self, parent, controller):
+        Frame.__init__(self, parent)
+        self.controller=controller
+
+        bottom = Frame(self)
+        bottom.pack(side=BOTTOM, fill=X)
+
+        self.check_alive(subproc_vnc, controller)
+
+        self.label = Label(self, text=_('Connection stablished'), bg="white")
+
+        self.label.pack(side=LEFT, fill=BOTH, expand=True)
+
+        finish_button = Button(self, text=_('Shut off connection'), command=lambda: self.finish_connection(controller, ))
+        finish_button.pack(in_=bottom, side=LEFT, fill=BOTH, expand=True)
+
+        self.pack()
+        
+
+    def finish_connection(self, controller):
+        """
+        Function to close the connection
+        :param controller: Handler's frame
+        :type controller: HelpChannel
+        """
+        logging.info('Finish connection!')
+        status = '10-FINISHED'
+
+        kill_x11()
+        
+        ok, errormsg = do_rest_request('/help-channel-client/finish', {'finisher': 'user'})
+        if not ok:
+            logging.error('Error in request: %s'%(errormsg))
+        
+        app.destroy()
+        if check_alive_timer:
+            check_alive_timer.cancel()
+
+    def check_alive(self, subproc_vnc, controller):
+        """
+        Check if the connection is still alive. This checking performs every X seconds.
+        The amount of seconds are provided in config.ini
+        :param subproc_vnc: Launched process by the application for handles the applicant's remote desktop
+        :type subproc_vnc: subprocess
+        """
+
+        logging.info('Checking if connection is alive...')
+        global check_alive_timer, end_loop
+
+        seconds = float(config_section_map("x11vncConfig")['polling_interval'])
+
+        if subproc_vnc.poll() is not None:
+            ok, errormsg = do_rest_request('/help-channel-client/finish', {'finisher': 'tech'})
+            if not ok:
+                logging.error('Error in request: %s'%(errormsg))
+            
+            end_loop = True
+            time.sleep(0.2)
+            showinfo(_('Alert'), _('Connection finished by technician'), parent=app)
+            kill_x11()            
+            app.destroy()
+            sys.exit(0)
+            
+        if subproc_tunnel.poll() is not None:
+            ok, errormsg = do_rest_request('/help-channel-client/finish', {'finisher': 'error'})
+            if not ok:
+                logging.error('Error in request: %s'%(errormsg))
+            
+            end_loop = True
+            time.sleep(0.2)
+            showinfo(_('Alert'), _('Connection finished by communication error'), parent=app)
+            kill_x11()            
+            app.destroy()
+            sys.exit(0)
+
+        check_alive_timer = threading.Timer(seconds, self.check_alive, (subproc_vnc, controller,))
+        check_alive_timer.start()
+
+
+
+
+
+class CustomAskOkCancel:
+    def __init__(self, parent, window_title, ok_message, cancel_message, label_message):
+        self.response = False
+
+        top = self.top = Toplevel(parent)
+        Label(top, text=label_message).pack()
+        top.wm_title(window_title)
+
+        # Center in the screen
+        windowWidth = top.winfo_reqwidth()
+        windowHeight = top.winfo_reqheight()
+         
+        # Gets both half the screen width/height and window width/height
+        positionRight = int(top.winfo_screenwidth()/2 - windowWidth/2)
+        positionDown = int(top.winfo_screenheight()/2 - windowHeight/2)
+         
+        # Positions the window in the center of the page.
+        top.geometry("+{}+{}".format(positionRight, positionDown))
+
+
+        bottom = Frame(top)
+        bottom.pack(side=BOTTOM, fill=X, pady=(30, 0))
+
+        button_ok = Button(top, text=ok_message, command=self.ok)
+        button_ok.pack(in_=bottom, side=LEFT, fill=BOTH, expand=True, pady=(0, 0))
+
+        button_cancel = Button(top, text=cancel_message, command=self.top.destroy)
+        button_cancel.pack(in_=bottom, side=LEFT, fill=BOTH, expand=True, pady=(0, 0))
+
+    def ok(self):
+        self.response = True;
+        self.top.destroy()
+
+
+if __name__ == "__main__":
+    
+    # Read /etc/helpchannel.conf file
+    if (not os.path.isfile('/etc/helpchannel.conf') or 
+        not os.access('/etc/helpchannel.conf', os.R_OK)):
+        # /etc/helpchannel.conf not found or not readable
+        showerror('Error', '/etc/helpchannel.conf not found or is '\
+             'not readable. Please, check it and try again.')
+        sys.exit(0)
+        
+    try:
+        config.read('/etc/helpchannel.conf')
+    except ConfigParser.ParsingError as err:
+        showerror('Error', 'Error parsing /etc/helpchannel.conf: %s' 
+            % (str(err)))
+        sys.exit(0)
+        
+    # Set default locale
+    language = config_section_map("i18nConfig")['language'] or 'es'
+
+    try:
+        lang = gettext.translation('helpchannel', languages=[language])
+        lang.install(unicode=1)    
+    except IOError:
+        print "No translations available"
+        _ = gettext.gettext
+
+
+    # Get known message
+    if (config_section_map("ServerConfig") 
+        and 'known_message' in config_section_map("ServerConfig")):
+        known_message = config_section_map("ServerConfig")['known_message']
+        
+    if not known_message or len(known_message.strip()) <= 0:
+        # Known message not specified
+        showerror(_('Error'), _('Known message not specified. Please, check it and '\
+            'try again.'))
+        sys.exit(0)
+    
+    
+
+    # Check x11vnc
+    x11vnc_path = config_section_map("x11vncConfig")['command_full_path']
+    if not os.path.isfile(x11vnc_path):
+        # x11vnc not found
+        showerror(_('Error'), _('x11vnc not found at %s. Please, check it and '\
+            'try again.') % x11vnc_path)
+        sys.exit(0)
+
+    # Check /etc/gcc.control
+    if (not os.path.isfile('/etc/gcc.control') or 
+        not os.access('/etc/gcc.control', os.R_OK)):
+        # gcc.control not found or not readable
+        showerror(_('Error'), _('gcc.control not found or is '\
+             'not readable. Please, check it and try again.'))
+        sys.exit(0)    
+    
+    # Check /etc/chef/client.pem
+    if (not os.path.isfile('/etc/chef/client.pem') or 
+        not os.access('/etc/chef/client.pem', os.R_OK)):
+        # /etc/chef/client.pem not found or not readable
+        showerror(_('Error'), _('/etc/chef/client.pem not found or is '\
+             'not readable. Please, check it and try again.'))
+        sys.exit(0)        
+    
+    
+    # Start Help Channel Client
+    app = HelpChannel()
+
+
+    def custom_ask_ok_cancel(windows_title, ok_message, cancel_message, label_message):
+        dialog = CustomAskOkCancel(app, windows_title, ok_message, cancel_message, label_message)
+        app.wait_window(dialog.top)
+        return dialog.response
+
+
+    def on_closing():
+        """
+        Function to catch the clic event generated by application's close button.
+        """
+        global closeDialogOpened
+
+        logging.info('Closing application...')
+        logging.debug('closeDialogOpened = %s'%(closeDialogOpened))
+        logging.debug('status = %s'%(status))
+
+        if not closeDialogOpened:
+            if status > "00-NO-LOGGED":
+                closeDialogOpened = True
+
+                if custom_ask_ok_cancel(_('Close connection'), _('Ok'), _('Cancel'),
+                                        _('Are you sure you want to abort the connection?')):
+                    ok, errormsg = do_rest_request('/help-channel-client/finish', {'finisher': 'tech'})
+                    if not ok:
+                        logging.error('Error in request: %s'%(errormsg))
+
+                    app.destroy()
+                    kill_x11()
+                    if check_alive_timer:
+                        check_alive_timer.cancel()
+                        
+                    sys.exit(0)
+                else:
+                    closeDialogOpened = False
+            else:
+#                kill_x11()
+                app.destroy()
+                if check_alive_timer:
+                    check_alive_timer.cancel()
+                sys.exit(0)
+        else:
+            kill_x11()
+            app.destroy()
+            if check_alive_timer:
+                check_alive_timer.cancel()
+            sys.exit(0)    
+
+
+    app.protocol('WM_DELETE_WINDOW', on_closing)
+    while not end_loop:
+        try:
+            app.update_idletasks()
+            app.update()
+            time.sleep(0.1)
+        except:
+            os._exit(1)
+
+    # In Tk.mainloop the signal processing is really slow
+    # but when "showinfo" is used in a different thread it needs mainloop 
+    app.mainloop() 
+    os._exit(1)
+    

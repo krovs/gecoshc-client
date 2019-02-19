@@ -1,0 +1,19 @@
+Source: gecosws-hc-client
+Section: utils
+Priority: optional
+Maintainer: Gecos Team <gecos@guadalinex.org>
+Build-Depends: debhelper (>= 8), cdbs (>=0.4.43), python-all-dev (>=2.3.5-11), dh-python, git
+Build-Depends-Indep: gettext, python-distutils-extra
+Standards-Version: 1.0.0
+Homepage: https://github.com/gecos-team/gecoshc-client
+Vcs-Browser: https://github.com/gecos-team/gecoshc-client
+Vcs-Bzr: https://github.com/gecos-team/gecoshc-client
+XS-Python-Version: current
+
+Package: gecosws-hc-client
+Architecture: all
+Depends: ${misc:Depends}, python, python-requests, python-tk, x11vnc
+Conflicts: python-websocket
+Description: GECOS Help Channel client
+ Desktop Application used to provide Help Channel support.
+
