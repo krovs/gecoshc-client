@@ -134,7 +134,7 @@ class Clean(Command):
 
 DistUtilsExtra.auto.setup(
     name='helpchannel',
-    version='1.0.1',
+    version='1.1.0',
     license='GPL-2',
     author='GECOS Team',
     author_email='gecos@guadalinex.org',
