@@ -64,7 +64,7 @@ def hcwst(host, port,repeater_ws,proxy_host,proxy_port,proxy_username,proxy_pass
     if ssl_verify:
         ssl_defaults = ssl.get_default_verify_paths()
         sslopt_ca_certs = {'ca_cert_path': ssl_defaults.capath}
-        ws = websocket.WebSocket(sslopt=sslopt_ca_certs
+        ws = websocket.WebSocket(sslopt=sslopt_ca_certs)
     else:
         ws = websocket.WebSocket(sslopt={"cert_reqs": ssl.CERT_NONE})
 
