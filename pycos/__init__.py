@@ -1,5 +1,5 @@
 """
-This file is part of pycos project. See https://pycos.sourceforge.io for details.
+This file is part of pycos; see https://pycos.org for details.
 
 This module provides framework for concurrent, asynchronous network programming
 with tasks, asynchronous completions and message passing. Other modules in pycos
@@ -23,22 +23,19 @@ import platform
 import ssl
 from heapq import heappush, heappop
 from bisect import bisect_left
-import Queue as queue
+import queue
 import atexit
 import collections
-import cPickle as pickle
+import pickle
 import copy
 
 if platform.system() == 'Windows':
     from errno import WSAEINPROGRESS as EINPROGRESS
     from errno import WSAEWOULDBLOCK as EWOULDBLOCK
     from errno import WSAEINVAL as EINVAL
-    from time import clock as _time
-    _time()
-    try:
-        import win_inet_pton
-    except:
-        pass
+    if sys.version_info < (3, 3):
+        from time import clock as _time
+        _time()
     if not hasattr(socket, 'IPPROTO_IPV6'):
         socket.IPPROTO_IPV6 = 41
 else:
@@ -47,6 +44,11 @@ else:
     from errno import EINVAL
     from time import time as _time
 
+if sys.version_info >= (3, 3):
+    from time import perf_counter as _time
+
+from pycos.config import MsgTimeout, PickleProtocolVersion
+
 
 __author__ = "Giridhar Pemmasani (pgiri@yahoo.com)"
 __email__ = "pgiri@yahoo.com"
@@ -54,34 +56,54 @@ __copyright__ = "Copyright (c) 2012-2014 Giridhar Pemmasani"
 __contributors__ = []
 __maintainer__ = "Giridhar Pemmasani (pgiri@yahoo.com)"
 __license__ = "Apache 2.0"
-__url__ = "https://pycos.sourceforge.io"
+__url__ = "https://pycos.org"
 __status__ = "Production"
-__version__ = "4.6.5"
+__version__ = "4.11.0"
 
 __all__ = ['Task', 'Pycos', 'Lock', 'RLock', 'Event', 'Condition', 'Semaphore',
-           'AsyncSocket', 'HotSwapException', 'MonitorException', 'Location', 'Channel',
+           'AsyncSocket', 'HotSwapException', 'MonitorStatus', 'Location', 'Channel',
            'CategorizeMessages', 'AsyncThreadPool', 'AsyncDBCursor',
-           'Singleton', 'logger', 'serialize', 'deserialize', 'unserialize', 'Logger']
+           'Singleton', 'logger', 'serialize', 'deserialize', 'Logger']
 
-# timeout in seconds used when sending messages
-MsgTimeout = 10
+# PyPI / pip packaging adjusts assertion below for Python 3.7+
+assert sys.version_info.major == 3 and sys.version_info.minor >= 7, \
+    ('"%s" is not suitable for Python version %s.%s; use file installed by pip instead' %
+     (__file__, sys.version_info.major, sys.version_info.minor))
+if PickleProtocolVersion is None:
+    PickleProtocolVersion = pickle.HIGHEST_PROTOCOL
+elif PickleProtocolVersion == 0:
+    PickleProtocolVersion = pickle.DEFAULT_PROTOCOL
+elif not isinstance(PickleProtocolVersion, int):
+    raise Exception('PickleProtocolVersion must be an integer')
 
 
 def serialize(obj):
-    return pickle.dumps(obj, pickle.HIGHEST_PROTOCOL)
+    return pickle.dumps(obj, protocol=PickleProtocolVersion)
 
 
 def deserialize(pkl):
     return pickle.loads(pkl)
-unserialize = deserialize
 
 
 class Singleton(type):
+    """
+    Meta class for singleton instances.
+    """
+
+    _memo = {}
 
     def __call__(cls, *args, **kwargs):
-        if not cls._instance:
-            cls._instance = super(Singleton, cls).__call__(*args, **kwargs)
-        return cls._instance
+        c = Singleton._memo.get(cls, None)
+        if not c:
+            c = Singleton._memo[cls] = super(Singleton, cls).__call__(*args, **kwargs)
+        return c
+
+    @classmethod
+    def discard(_, cls):
+        """
+        Forget singleton instance.
+        """
+        Singleton._memo.pop(cls, None)
 
 
 class Logger(object):
@@ -176,9 +198,9 @@ class _AsyncSocket(object):
 
     __slots__ = ('_rsock', '_keyfile', '_certfile', '_ssl_version', '_fileno', '_timeout',
                  '_timeout_id', '_read_task', '_read_fn', '_read_result', '_write_task',
-                 '_write_fn', '_write_result', '_scheduler', '_notifier', 'recvall', 'sendall',
-                 'recv_msg', 'send_msg', '_blocking', 'recv', 'send', 'recvfrom', 'sendto',
-                 'accept', 'connect', 'ssl_server_ctx')
+                 '_write_fn', '_write_result', '_scheduler', '_notifier', '_event',
+                 'recvall', 'sendall', 'recv_msg', 'send_msg', '_blocking', 'recv', 'send',
+                 'recvfrom', 'sendto', 'accept', 'connect', 'ssl_server_ctx')
 
     _default_timeout = None
     _MsgLengthSize = struct.calcsize('>L')
@@ -223,6 +245,7 @@ class _AsyncSocket(object):
             self._write_result = None
             self._scheduler = None
             self._notifier = None
+            self._event = None
             self.ssl_server_ctx = None
 
             self.recvall = None
@@ -251,7 +274,7 @@ class _AsyncSocket(object):
         if self._blocking:
             self._unregister()
             self._rsock.setblocking(1)
-            if self._certfile:
+            if self._certfile and (not hasattr(self._rsock, 'do_handshake')):
                 self._rsock = ssl.wrap_socket(self._rsock, keyfile=self._keyfile,
                                               certfile=self._certfile,
                                               ssl_version=self._ssl_version)
@@ -384,6 +407,8 @@ class _AsyncSocket(object):
                 n = len(self._read_result) - len(view)
                 if n > 0:
                     buf = bytes(self._read_result[:n])
+                if isinstance(view, memoryview):
+                    view.release()
             if buf:
                 self._read_task._proceed_(buf)
             else:
@@ -392,8 +417,9 @@ class _AsyncSocket(object):
             self._read_fn = self._read_result = self._read_task = None
         if self._write_fn:
             sent = 0
-            if isinstance(self._write_result, buffer):
+            if isinstance(self._write_result, memoryview):
                 sent = self._write_fn.args[1] - len(self._write_result)
+                self._write_result.release()
             if sent:
                 self._write_task._proceed_(sent)
             else:
@@ -415,7 +441,7 @@ class _AsyncSocket(object):
         def _recv():
             try:
                 buf = self._rsock.recv(bufsize, *args)
-            except:
+            except Exception:
                 self._read_fn = None
                 self._notifier.clear(self, _AsyncPoller._Read)
                 self._read_task.throw(*sys.exc_info())
@@ -435,7 +461,7 @@ class _AsyncSocket(object):
         if self._certfile and self._rsock.pending():
             try:
                 buf = self._rsock.recv(bufsize, *args)
-            except:
+            except Exception:
                 self._read_fn = None
                 self._notifier.clear(self, _AsyncPoller._Read)
                 self._read_task.throw(*sys.exc_info())
@@ -457,7 +483,8 @@ class _AsyncSocket(object):
         def _recvall(self, view):
             try:
                 recvd = self._rsock.recv_into(view, len(view), *args)
-            except:
+            except Exception:
+                view.release()
                 self._read_fn = self._read_result = None
                 self._notifier.clear(self, _AsyncPoller._Read)
                 self._read_task.throw(*sys.exc_info())
@@ -465,7 +492,8 @@ class _AsyncSocket(object):
                 if recvd:
                     view = view[recvd:]
                     if len(view) == 0:
-                        buf = str(self._read_result)
+                        view.release()
+                        buf = self._read_result
                         self._read_fn = self._read_result = None
                         self._notifier.clear(self, _AsyncPoller._Read)
                         self._read_task._proceed_(buf)
@@ -475,9 +503,10 @@ class _AsyncSocket(object):
                             self._notifier._del_timeout(self)
                             self._notifier._add_timeout(self)
                 else:
+                    view.release()
                     self._read_fn = self._read_result = None
                     self._notifier.clear(self, _AsyncPoller._Read)
-                    self._read_task._proceed_('')
+                    self._read_task._proceed_(b'')
 
         self._read_result = bytearray(bufsize)
         view = memoryview(self._read_result)
@@ -492,13 +521,14 @@ class _AsyncSocket(object):
         if self._certfile and self._rsock.pending():
             try:
                 recvd = self._rsock.recv_into(view, len(view), *args)
-            except:
+            except Exception:
                 self._read_fn = self._read_result = None
                 self._notifier.clear(self, _AsyncPoller._Read)
                 self._read_task.throw(*sys.exc_info())
             else:
                 if recvd == bufsize:
-                    buf = str(self._read_result)
+                    view.release()
+                    buf = self._read_result
                     self._read_fn = self._read_result = None
                     self._notifier.clear(self, _AsyncPoller._Read)
                     self._read_task._proceed_(buf)
@@ -516,10 +546,12 @@ class _AsyncSocket(object):
         while len(view) > 0:
             recvd = self._rsock.recv_into(view, *args)
             if not recvd:
+                view.release()
                 self._read_result = None
-                return ''
+                return b''
             view = view[recvd:]
-        buf, self._read_result = str(self._read_result), None
+        view.release()
+        buf, self._read_result = self._read_result, None
         return buf
 
     def _async_recvfrom(self, *args):
@@ -530,7 +562,7 @@ class _AsyncSocket(object):
         def _recvfrom():
             try:
                 buf = self._rsock.recvfrom(*args)
-            except:
+            except Exception:
                 self._read_fn = None
                 self._notifier.clear(self, _AsyncPoller._Read)
                 self._read_task.throw(*sys.exc_info())
@@ -556,7 +588,7 @@ class _AsyncSocket(object):
         def _send():
             try:
                 sent = self._rsock.send(*args)
-            except:
+            except Exception:
                 self._write_fn = None
                 self._notifier.clear(self, _AsyncPoller._Write)
                 self._write_task.throw(*sys.exc_info())
@@ -582,7 +614,7 @@ class _AsyncSocket(object):
         def _sendto():
             try:
                 sent = self._rsock.sendto(*args)
-            except:
+            except Exception:
                 self._write_fn = None
                 self._notifier.clear(self, _AsyncPoller._Write)
                 self._write_task.throw(*sys.exc_info())
@@ -612,6 +644,7 @@ class _AsyncSocket(object):
             try:
                 sent = self._rsock.send(self._write_result, *args)
                 if sent < 0:
+                    self._write_result.release()
                     self._write_fn = self._write_result = None
                     self._notifier.clear(self, _AsyncPoller._Write)
                     self._write_task.throw(*sys.exc_info())
@@ -621,7 +654,8 @@ class _AsyncSocket(object):
                     self._write_fn = self._write_result = None
                     self._notifier.clear(self, _AsyncPoller._Write)
                     self._write_task.throw(*sys.exc_info())
-            except:
+            except Exception:
+                self._write_result.release()
                 self._write_fn = self._write_result = None
                 self._notifier.clear(self, _AsyncPoller._Write)
                 self._write_task.throw(*sys.exc_info())
@@ -629,6 +663,7 @@ class _AsyncSocket(object):
                 if sent > 0:
                     self._write_result = self._write_result[sent:]
                     if len(self._write_result) == 0:
+                        self._write_result.release()
                         self._write_fn = self._write_result = None
                         self._notifier.clear(self, _AsyncPoller._Write)
                         self._write_task._proceed_(None)
@@ -636,7 +671,7 @@ class _AsyncSocket(object):
                     #     self._notifier._del_timeout(self)
                     #     self._notifier._add_timeout(self)
 
-        self._write_result = buffer(data)
+        self._write_result = memoryview(data)
         if not self._scheduler:
             self._scheduler = Pycos.scheduler()
             self._notifier = self._scheduler._notifier
@@ -652,12 +687,14 @@ class _AsyncSocket(object):
         Synchronous version of async_sendall.
         """
         # TODO: is socket's sendall better?
-        buf = buffer(data)
+        buf = memoryview(data)
         while len(buf) > 0:
             sent = self._rsock.send(buf, *args)
             if sent < 0:
+                buf.release()
                 raise socket.error('hangup')
             buf = buf[sent:]
+        buf.release()
         return None
 
     def _async_accept(self):
@@ -669,7 +706,7 @@ class _AsyncSocket(object):
         def _accept():
             try:
                 conn, addr = self._rsock.accept()
-            except:
+            except Exception:
                 self._read_fn = None
                 self._notifier.clear(self, _AsyncPoller._Read)
                 self._read_task.throw(*sys.exc_info())
@@ -699,7 +736,7 @@ class _AsyncSocket(object):
                                                   certfile=self._certfile,
                                                   ssl_version=self._ssl_version, server_side=True,
                                                   do_handshake_on_connect=False)
-            except:
+            except Exception:
                 self._read_task.throw(*sys.exc_info())
                 self._read_task = None
                 conn.close()
@@ -717,7 +754,7 @@ class _AsyncSocket(object):
                         conn._notifier.clear(conn, _AsyncPoller._Read | _AsyncPoller._Write)
                         conn._read_task.throw(*sys.exc_info())
                         conn.close()
-                except:
+                except Exception:
                     conn._read_fn = conn._write_fn = None
                     conn._notifier.clear(conn, _AsyncPoller._Read | _AsyncPoller._Write)
                     conn._read_task.throw(*sys.exc_info())
@@ -779,7 +816,7 @@ class _AsyncSocket(object):
                 self._rsock = ssl.wrap_socket(self._rsock, ca_certs=self._certfile,
                                               cert_reqs=ssl.CERT_REQUIRED, server_side=False,
                                               do_handshake_on_connect=False)
-            except:
+            except Exception:
                 self._write_task.throw(*sys.exc_info())
                 self._write_task = self._write_fn = None
                 self.close()
@@ -797,7 +834,7 @@ class _AsyncSocket(object):
                         self._notifier.clear(self, _AsyncPoller._Read | _AsyncPoller._Write)
                         self._write_task.throw(*sys.exc_info())
                         self.close()
-                except:
+                except Exception:
                     self._read_fn = self._write_fn = None
                     self._notifier.clear(self, _AsyncPoller._Read | _AsyncPoller._Write)
                     self._write_task.throw(*sys.exc_info())
@@ -835,7 +872,7 @@ class _AsyncSocket(object):
         Messages are tagged with length of the data, so on the receiving side,
         recv_msg knows how much data to receive.
         """
-        yield self.sendall(struct.pack('>L', len(data)) + data)
+        return((yield self.sendall(struct.pack('>L', len(data)) + data)))
 
     def _sync_send_msg(self, data):
         """Internal use only; use 'send_msg' instead.
@@ -856,12 +893,12 @@ class _AsyncSocket(object):
         except socket.error as err:
             if err.args[0] == 'hangup':
                 # raise socket.error(errno.EPIPE, 'Insufficient data')
-                raise StopIteration('')
+                return(b'')
             else:
                 raise
         if len(data) != n:
             # raise socket.error(errno.EPIPE, 'Insufficient data: %s / %s' % (len(data), n))
-            raise StopIteration('')
+            return(b'')
         n = struct.unpack('>L', data)[0]
         # assert n >= 0
         if n:
@@ -870,15 +907,15 @@ class _AsyncSocket(object):
             except socket.error as err:
                 if err.args[0] == 'hangup':
                     # raise socket.error(errno.EPIPE, 'Insufficient data')
-                    raise StopIteration('')
+                    return(b'')
                 else:
                     raise
             if len(data) != n:
                 # raise socket.error(errno.EPIPE, 'Insufficient data: %s / %s' % (len(data), n))
-                raise StopIteration('')
-            raise StopIteration(data)
+                return(b'')
+            return(data)
         else:
-            raise StopIteration('')
+            return(b'')
 
     def _sync_recv_msg(self):
         """Internal use only; use 'recv_msg' instead.
@@ -891,12 +928,12 @@ class _AsyncSocket(object):
         except socket.error as err:
             if err.args[0] == 'hangup':
                 # raise socket.error(errno.EPIPE, 'Insufficient data')
-                return ''
+                return b''
             else:
                 raise
         if len(data) != n:
             # raise socket.error(errno.EPIPE, 'Insufficient data: %s / %s' % (len(data), n))
-            return ''
+            return b''
         n = struct.unpack('>L', data)[0]
         # assert n >= 0
         if n:
@@ -905,15 +942,15 @@ class _AsyncSocket(object):
             except socket.error as err:
                 if err.args[0] == 'hangup':
                     # raise socket.error(errno.EPIPE, 'Insufficient data')
-                    return ''
+                    return b''
                 else:
                     raise
             if len(data) != n:
                 # raise socket.error(errno.EPIPE, 'Insufficient data: %s / %s' % (len(data), n))
-                return ''
+                return b''
             return data
         else:
-            return ''
+            return b''
 
     def create_connection(self, host_port, timeout=None, source_address=None):
         if timeout is not None:
@@ -930,7 +967,7 @@ if platform.system() == 'Windows':
         import win32file
         import win32event
         import winerror
-    except:
+    except ImportError:
         logger.warning('Could not load pywin32 for I/O Completion Ports; '
                        'using inefficient polling for sockets')
     else:
@@ -950,7 +987,6 @@ if platform.system() == 'Windows':
             def __init__(self, iocp_notifier):
                 self._poller_name = 'select'
                 self._fds = {}
-                self._events = {}
                 self._terminate = False
                 self.rset = set()
                 self.wset = set()
@@ -976,34 +1012,31 @@ if platform.system() == 'Windows':
                         self._lock.release()
                         logger.debug('fd %s is not registered', fid)
                         return
-                    event = self._events.pop(fid, 0)
+                    event = fd._event
+                    fd._event = None
                 else:
-                    event = self._events.get(fd, 0)
-                if event & _AsyncPoller._Read:
-                    self.rset.discard(fid)
-                if event & _AsyncPoller._Write:
-                    self.wset.discard(fid)
-                if event & _AsyncPoller._Error:
-                    self.xset.discard(fid)
+                    event = fd._event
+                    fd._event = 0
+                if event:
+                    if event & _AsyncPoller._Read:
+                        self.rset.discard(fid)
+                    if event & _AsyncPoller._Write:
+                        self.wset.discard(fid)
+                    if event & _AsyncPoller._Error:
+                        self.xset.discard(fid)
                 if update and self._polling:
-                    self.cmd_wsock.send('u')
+                    self.cmd_wsock.send(b'u')
                 self._lock.release()
 
             def add(self, fd, event):
                 fid = fd._fileno
-                if fd._timeout:
-                    self.iocp_notifier._del_timeout(fd)
                 self._lock.acquire()
-                cur_event = self._events.get(fid, 0)
-                if cur_event & _AsyncPoller._Read:
-                    self.rset.discard(fid)
-                if cur_event & _AsyncPoller._Write:
-                    self.wset.discard(fid)
-                if cur_event & _AsyncPoller._Error:
-                    self.xset.discard(fid)
-                event |= cur_event
-                self._events[fid] = event
-                self._fds[fid] = fd
+                if fd._event:
+                    event = event & ~fd._event
+                    fd._event |= event
+                else:
+                    fd._event = event
+                    self._fds[fid] = fd
                 if event:
                     if event & _AsyncPoller._Read:
                         self.rset.add(fid)
@@ -1012,39 +1045,30 @@ if platform.system() == 'Windows':
                     if event & _AsyncPoller._Error:
                         self.xset.add(fid)
                     if fd._timeout:
+                        # TODO: add timeout only if not already in timeouts?
                         self.iocp_notifier._add_timeout(fd)
                         self.iocp_notifier.interrupt(fd._timeout)
                 self._lock.release()
                 if self._polling:
-                    self.cmd_wsock.send('m')
+                    self.cmd_wsock.send(b'm')
 
             def clear(self, fd, event=0):
                 fid = fd._fileno
                 self._lock.acquire()
-                cur_event = self._events.get(fid, 0)
-                if cur_event:
-                    if cur_event & _AsyncPoller._Read:
-                        self.rset.discard(fid)
-                    if cur_event & _AsyncPoller._Write:
-                        self.wset.discard(fid)
-                    if cur_event & _AsyncPoller._Error:
-                        self.xset.discard(fid)
-                    if event:
-                        cur_event &= ~event
-                    else:
-                        cur_event = 0
-                    self._events[fid] = cur_event
-                    if cur_event:
-                        if cur_event & _AsyncPoller._Read:
-                            self.rset.add(fid)
-                        if cur_event & _AsyncPoller._Write:
-                            self.wset.add(fid)
-                        if cur_event & _AsyncPoller._Error:
-                            self.xset.add(fid)
-                    elif fd._timeout_id:
+                if fd._event:
+                    d = fd._event & event
+                    if d:
+                        if d & _AsyncPoller._Read:
+                            self.rset.discard(fid)
+                        if d & _AsyncPoller._Write:
+                            self.wset.discard(fid)
+                        if d & _AsyncPoller._Error:
+                            self.xset.discard(fid)
+                    fd._event &= ~event
+                    if (not fd._event) and fd._timeout_id:
                         self.iocp_notifier._del_timeout(fd)
                     if self._polling:
-                        self.cmd_wsock.send('m')
+                        self.cmd_wsock.send(b'm')
                 self._lock.release()
 
             def poll(self):
@@ -1067,7 +1091,7 @@ if platform.system() == 'Windows':
 
                     self._lock.acquire()
                     events = [(self._fds.get(fid, None), event)
-                              for (fid, event) in events.iteritems()]
+                              for (fid, event) in events.items()]
                     iocp_notify = False
                     for fd, event in events:
                         if fd is None:
@@ -1101,12 +1125,11 @@ if platform.system() == 'Windows':
                 self.cmd_rsock.close()
                 self.cmd_wsock.close()
                 self.cmd_rsock = self.cmd_wsock = None
-                self.__class__._instance = None
 
             def terminate(self):
                 if not self._terminate:
                     self._terminate = True
-                    self.cmd_wsock.send('x')
+                    self.cmd_wsock.send(b'x')
                     self.poll_thread.join(0.2)
 
             @staticmethod
@@ -1128,7 +1151,7 @@ if platform.system() == 'Windows':
                             raise
                     write_sock.setblocking(True)
                     read_sock = srv_sock.accept()[0]
-                except:
+                except Exception:
                     write_sock.close()
                     raise
                 finally:
@@ -1172,7 +1195,7 @@ if platform.system() == 'Windows':
                     logger.warning('WSARecv error: %s', err)
 
             def interrupt(self, timeout=None):
-                self.cmd_wsock.send('i')
+                self.cmd_wsock.send(b'i')
 
             def register(self, handle, event=0):
                 win32file.CreateIoCompletionPort(handle, self.iocp, 1, 0)
@@ -1269,7 +1292,6 @@ if platform.system() == 'Windows':
                     win32file.CloseHandle(iocp)
                     self._timeouts = []
                     self.cmd_rsock = self.cmd_wsock = None
-                    self.__class__._instance = None
 
         class AsyncSocket(_AsyncSocket):
             """AsyncSocket with I/O Completion Ports (under Windows). See
@@ -1364,11 +1386,11 @@ if platform.system() == 'Windows':
                         if self._read_task:
                             if (err == winerror.ERROR_CONNECTION_INVALID or
                                 err == winerror.ERROR_OPERATION_ABORTED):
-                                self._read_task._proceed_('')
+                                self._read_task._proceed_(b'')
                             else:
                                 self._read_task.throw(socket.error(err))
                     else:
-                        buf = self._read_result[:n]
+                        buf = self._read_result[:n].tobytes()
                         self._read_overlap.object = self._read_result = None
                         self._read_task._proceed_(buf)
 
@@ -1422,39 +1444,42 @@ if platform.system() == 'Windows':
             def _iocp_recvall(self, bufsize, *args):
                 """Internal use only; use 'recvall' with 'yield' instead.
                 """
-                buf = [win32file.AllocateReadBuffer(min(bufsize, 1048576))]
-                pending = [bufsize]
+                self._read_result = win32file.AllocateReadBuffer(bufsize)
+                # buffer is memoryview object
+                view = self._read_result
 
                 def _recvall(err, n):
+                    nonlocal view
                     if err or n == 0:
                         if self._timeout and self._notifier:
                             self._notifier._del_timeout(self)
+                        view.release()
                         self._read_overlap.object = self._read_result = None
                         if not err:
                             err = winerror.ERROR_CONNECTION_INVALID
                         if self._read_task:
                             if (err == winerror.ERROR_CONNECTION_INVALID or
                                 err == winerror.ERROR_OPERATION_ABORTED):
-                                self._read_task._proceed_('')
+                                self._read_task._proceed_(b'')
                             else:
                                 self._read_task.throw(socket.error(err))
                     else:
-                        self._read_result.append(buf[0][:n])
-                        pending[0] -= n
-                        if pending[0]:
-                            buf[0] = win32file.AllocateReadBuffer(min(pending[0], 1048576))
-                            err, n = win32file.WSARecv(self._fileno, buf[0], self._read_overlap, 0)
+                        view = view[n:]
+                        if view:
+                            err, n = win32file.WSARecv(self._fileno, view, self._read_overlap, 0)
                             if err != winerror.ERROR_IO_PENDING and err:
                                 if self._timeout and self._notifier:
                                     self._notifier._del_timeout(self)
+                                view.release()
                                 self._read_overlap.object = self._read_result = None
                                 self._read_task.throw(socket.error(err))
                         else:
-                            buf[0] = ''.join(self._read_result)
+                            buf = self._read_result.tobytes()
+                            self._read_result.release()
                             if self._timeout and self._notifier:
                                 self._notifier._del_timeout(self)
                             self._read_overlap.object = self._read_result = None
-                            self._read_task._proceed_(buf[0])
+                            self._read_task._proceed_(buf)
 
                 if not self._scheduler:
                     self._scheduler = Pycos.scheduler()
@@ -1463,10 +1488,9 @@ if platform.system() == 'Windows':
                 if self._timeout:
                     self._notifier._add_timeout(self)
                 self._read_overlap.object = _recvall
-                self._read_result = []
                 self._read_task = Pycos.cur_task(self._scheduler)
                 self._read_task._await_()
-                err, n = win32file.WSARecv(self._fileno, buf[0], self._read_overlap, 0)
+                err, n = win32file.WSARecv(self._fileno, view, self._read_overlap, 0)
                 if err != winerror.ERROR_IO_PENDING and err:
                     self._read_overlap.object(err, n)
 
@@ -1487,6 +1511,7 @@ if platform.system() == 'Windows':
                         if len(self._write_result) == 0:
                             if self._timeout and self._notifier:
                                 self._notifier._del_timeout(self)
+                            self._write_result.release()
                             self._write_overlap.object = self._write_result = None
                             self._write_task._proceed_(0)
                         else:
@@ -1505,7 +1530,7 @@ if platform.system() == 'Windows':
                 if self._timeout:
                     self._notifier._add_timeout(self)
                 self._write_overlap.object = _sendall
-                self._write_result = buffer(data)
+                self._write_result = memoryview(data)
                 self._write_task = Pycos.cur_task(self._scheduler)
                 self._write_task._await_()
                 err, n = win32file.WSASend(self._fileno, self._write_result, self._write_overlap, 0)
@@ -1527,7 +1552,7 @@ if platform.system() == 'Windows':
                         return
 
                     self._rsock.setsockopt(socket.SOL_SOCKET,
-                                           win32file.SO_UPDATE_CONNECT_CONTEXT, '')
+                                           win32file.SO_UPDATE_CONNECT_CONTEXT, b'')
                     if not self._certfile:
                         if self._timeout and self._notifier:
                             self._notifier._del_timeout(self)
@@ -1547,7 +1572,7 @@ if platform.system() == 'Windows':
                                 if err != winerror.ERROR_IO_PENDING and err:
                                     logger.warning('SSL handshake failed (%s)?', err)
                             elif exc.args[0] == ssl.SSL_ERROR_WANT_WRITE:
-                                err, n = win32file.WSASend(self._fileno, '', self._read_overlap, 0)
+                                err, n = win32file.WSASend(self._fileno, b'', self._read_overlap, 0)
                                 if err != winerror.ERROR_IO_PENDING and err:
                                     logger.warning('SSL handshake failed (%s)?', err)
                             else:
@@ -1558,7 +1583,7 @@ if platform.system() == 'Windows':
                                 self.close()
                                 if task:
                                     task.throw(*sys.exc_info())
-                        except:
+                        except Exception:
                             if self._timeout and self._notifier:
                                 self._notifier._del_timeout(self)
                             self._read_overlap.object = self._read_result = None
@@ -1584,7 +1609,7 @@ if platform.system() == 'Windows':
                         # TODO: is it required to bind to '::'?
                         try:
                             self._rsock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
-                        except:
+                        except Exception:
                             pass
                         self._rsock.bind(('::', 0))
                     else:
@@ -1626,7 +1651,12 @@ if platform.system() == 'Windows':
 
                     family, laddr, raddr = win32file.GetAcceptExSockaddrs(conn,
                                                                           self._read_result)
+                    # it seems getpeername returns IP address as string, but
+                    # GetAcceptExSockaddrs returns bytes, so decode address
+                    if family == socket.AF_INET:
+                        raddr = (raddr[0].decode('ascii'), raddr[1])
                     # TODO: unpack raddr if family != AF_INET
+
                     conn._rsock.setsockopt(socket.SOL_SOCKET, win32file.SO_UPDATE_ACCEPT_CONTEXT,
                                            struct.pack('P', self._fileno))
 
@@ -1662,7 +1692,7 @@ if platform.system() == 'Windows':
                                 if err != winerror.ERROR_IO_PENDING and err:
                                     logger.warning('SSL handshake failed (%s)?', err)
                             elif exc.args[0] == ssl.SSL_ERROR_WANT_WRITE:
-                                err, n = win32file.WSASend(conn._fileno, '', self._read_overlap, 0)
+                                err, n = win32file.WSASend(conn._fileno, b'', self._read_overlap, 0)
                                 if err != winerror.ERROR_IO_PENDING and err:
                                     logger.warning('SSL handshake failed (%s)?', err)
                             else:
@@ -1673,7 +1703,7 @@ if platform.system() == 'Windows':
                                 conn.close()
                                 if task:
                                     task.throw(*sys.exc_info())
-                        except:
+                        except Exception:
                             if self._timeout and self._notifier:
                                 self._notifier._del_timeout(self)
                             self._read_overlap.object = self._read_result = None
@@ -1775,15 +1805,15 @@ if not hasattr(sys.modules[__name__], '_AsyncNotifier'):
                 _AsyncPoller._Block = None
 
             self._fds = {}
-            self._events = {}
             self._timeouts = []
             self.cmd_read, self.cmd_write = _AsyncPoller._cmd_read_write_fds(self)
             if hasattr(self.cmd_write, 'getsockname'):
                 self.cmd_read = AsyncSocket(self.cmd_read)
                 self.cmd_read._read_fn = lambda: self.cmd_read._rsock.recv(128)
-                self.interrupt = lambda: self.cmd_write.send('I')
+                self.cmd_read._notifier = self
+                self.interrupt = lambda: self.cmd_write.send(b'I')
             else:
-                self.interrupt = lambda: os.write(self.cmd_write._fileno, 'I')
+                self.interrupt = lambda: os.write(self.cmd_write._fileno, b'I')
             self.add(self.cmd_read, _AsyncPoller._Read)
 
         def poll(self, timeout):
@@ -1803,7 +1833,7 @@ if not hasattr(sys.modules[__name__], '_AsyncNotifier'):
 
             try:
                 events = self._poller.poll(poll_timeout)
-            except:
+            except Exception:
                 logger.debug(traceback.format_exc())
                 # prevent tight loops
                 time.sleep(5)
@@ -1833,7 +1863,7 @@ if not hasattr(sys.modules[__name__], '_AsyncNotifier'):
                     elif event & _AsyncPoller._Error:
                         logger.warning('error on fd %s', fd._fileno)
                         self.unregister(fd)
-            except:
+            except Exception:
                 logger.debug(traceback.format_exc())
 
             if self._timeouts:
@@ -1847,16 +1877,23 @@ if not hasattr(sys.modules[__name__], '_AsyncNotifier'):
         def terminate(self):
             if hasattr(self.cmd_write, 'getsockname'):
                 self.cmd_write.close()
+                self._fds.pop(self.cmd_read._fileno, None)
             self.cmd_read.close()
-            for fd in self._fds.itervalues():
-                try:
-                    self._poller.unregister(fd._fileno)
-                except:
-                    logger.warning('unregister of %s failed with %s',
-                                   fd._fileno, traceback.format_exc())
+            for fd in list(self._fds.values()):
+                setblocking = getattr(fd, 'setblocking', None)
+                if setblocking and fd._rsock:
+                    setblocking(True)
+                else:
+                    try:
+                        self._poller.unregister(fd._fileno)
+                    except Exception:
+                        logger.warning('unregister of %s failed with %s',
+                                       fd._fileno, traceback.format_exc())
                 fd._notifier = None
             self._fds.clear()
             self._timeouts = []
+            if hasattr(self._poller, 'close'):
+                self._poller.close()
             if hasattr(self._poller, 'terminate'):
                 self._poller.terminate()
             self._poller = None
@@ -1889,19 +1926,17 @@ if not hasattr(sys.modules[__name__], '_AsyncNotifier'):
             if self._fds.pop(fd._fileno, None) is None:
                 logger.debug('fd %s is not registered', fd._fileno)
                 return
-            self._events.pop(fd._fileno, None)
+            fd._event = None
             self._poller.unregister(fd._fileno)
             self._del_timeout(fd)
 
         def add(self, fd, event):
-            cur_event = self._events.get(fd._fileno, None)
-            if cur_event is None:
+            if fd._event is None:
                 self._fds[fd._fileno] = fd
-                self._events[fd._fileno] = event
+                fd._event = event
                 self._poller.register(fd._fileno, event)
             else:
-                event |= cur_event
-                self._events[fd._fileno] = event
+                fd._event |= event
                 self._poller.modify(fd._fileno, event)
             if fd._timeout:
                 self._add_timeout(fd)
@@ -1909,13 +1944,13 @@ if not hasattr(sys.modules[__name__], '_AsyncNotifier'):
                 fd._timeout_id = None
 
         def clear(self, fd, event=0):
-            cur_event = self._events.get(fd._fileno, None)
+            cur_event = fd._event
             if cur_event:
                 if event:
                     cur_event &= ~event
                 else:
                     cur_event = 0
-                self._events[fd._fileno] = cur_event
+                fd._event = cur_event
                 self._poller.modify(fd._fileno, cur_event)
                 if not cur_event:
                     self._del_timeout(fd)
@@ -1930,6 +1965,7 @@ if not hasattr(sys.modules[__name__], '_AsyncNotifier'):
                         self._timeout = None
                         self._timeout_id = None
                         self._notifier = notifier
+                        self._event = None
                         flags = fcntl.fcntl(self._fileno, fcntl.F_GETFL)
                         fcntl.fcntl(self._fileno, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
@@ -1965,7 +2001,7 @@ if not hasattr(sys.modules[__name__], '_AsyncNotifier'):
                             raise
                     write_sock.setblocking(True)
                     read_sock = srv_sock.accept()[0]
-                except:
+                except Exception:
                     write_sock.close()
                     raise
                 finally:
@@ -2060,7 +2096,7 @@ if not hasattr(sys.modules[__name__], '_AsyncNotifier'):
             for fid in xlist:
                 events[fid] = events.get(fid, 0) | _AsyncPoller._Error
 
-            return events.iteritems()
+            return events.items()
 
         def terminate(self):
             self.rset = set()
@@ -2077,21 +2113,33 @@ class Lock(object):
     def __init__(self):
         self._owner = None
         self._waitlist = []
-        self._scheduler = Pycos.scheduler()
+        self._scheduler = None
 
-    def acquire(self, blocking=True):
+    def acquire(self, blocking=True, timeout=-1):
         """Must be used with 'yield' as 'yield lock.acquire()'.
         """
         if not blocking and self._owner is not None:
-            raise StopIteration(False)
+            return(False)
         if not self._scheduler:
             self._scheduler = Pycos.scheduler()
         task = Pycos.cur_task(self._scheduler)
+        if timeout < 0:
+            timeout = None
         while self._owner is not None:
+            if timeout is not None:
+                if timeout <= 0:
+                    return(False)
+                start = _time()
             self._waitlist.append(task)
-            yield task._await_()
+            if (yield task._await_(timeout)) is None:
+                try:
+                    self._waitlist.remove(task)
+                except ValueError:
+                    pass
+            if timeout is not None:
+                timeout -= (_time() - start)
         self._owner = task
-        raise StopIteration(True)
+        return(True)
 
     def release(self):
         """May be used with 'yield'.
@@ -2112,9 +2160,9 @@ class RLock(object):
         self._owner = None
         self._depth = 0
         self._waitlist = []
-        self._scheduler = Pycos.scheduler()
+        self._scheduler = None
 
-    def acquire(self, blocking=True):
+    def acquire(self, blocking=True, timeout=-1):
         """Must be used with 'yield' as 'yield rlock.acquire()'.
         """
         if not self._scheduler:
@@ -2123,16 +2171,28 @@ class RLock(object):
         if self._owner == task:
             assert self._depth > 0
             self._depth += 1
-            raise StopIteration(True)
+            return(True)
         if not blocking and self._owner is not None:
-            raise StopIteration(False)
+            return(False)
+        if timeout < 0:
+            timeout = None
         while self._owner is not None:
+            if timeout is not None:
+                if timeout <= 0:
+                    return(False)
+                start = _time()
             self._waitlist.append(task)
-            yield task._await_()
+            if (yield task._await_(timeout)) is None:
+                try:
+                    self._waitlist.remove(task)
+                except ValueError:
+                    pass
+            if timeout is not None:
+                timeout -= (_time() - start)
         assert self._depth == 0
         self._owner = task
         self._depth = 1
-        raise StopIteration(True)
+        return(True)
 
     def release(self):
         """May be used with 'yield'.
@@ -2159,9 +2219,9 @@ class Condition(object):
         self._depth = 0
         self._waitlist = []
         self._notifylist = []
-        self._scheduler = Pycos.scheduler()
+        self._scheduler = None
 
-    def acquire(self, blocking=True):
+    def acquire(self, blocking=True, timeout=-1):
         """Must be used with 'yield' as 'yield cv.acquire()'.
         """
         if not self._scheduler:
@@ -2169,16 +2229,28 @@ class Condition(object):
         task = Pycos.cur_task(self._scheduler)
         if self._owner == task:
             self._depth += 1
-            raise StopIteration(True)
+            return(True)
         if not blocking and self._owner is not None:
-            raise StopIteration(False)
+            return(False)
+        if timeout < 0:
+            timeout = None
         while self._owner is not None:
+            if timeout is not None:
+                if timeout <= 0:
+                    return(False)
+                start = _time()
             self._waitlist.append(task)
-            yield task._await_()
+            if (yield task._await_(timeout)) is None:
+                try:
+                    self._waitlist.remove(task)
+                except ValueError:
+                    pass
+            if timeout is not None:
+                timeout -= (_time() - start)
         assert self._depth == 0
         self._owner = task
         self._depth = 1
-        raise StopIteration(True)
+        return(True)
 
     def release(self):
         """May be used with 'yield'.
@@ -2228,24 +2300,24 @@ class Condition(object):
                 self._notifylist.remove(task)
             except ValueError:
                 pass
-            raise StopIteration(False)
+            return(False)
         while self._owner is not None:
             self._waitlist.insert(0, task)
             if timeout is not None:
                 timeout -= (_time() - start)
                 if timeout <= 0:
-                    raise StopIteration(False)
+                    return(False)
                 start = _time()
             if (yield task._await_(timeout)) is None:
                 try:
                     self._waitlist.remove(task)
                 except ValueError:
                     pass
-                raise StopIteration(False)
+                return(False)
         assert self._depth == 0
         self._owner = task
         self._depth = depth
-        raise StopIteration(True)
+        return(True)
 
 
 class Event(object):
@@ -2254,7 +2326,7 @@ class Event(object):
     def __init__(self):
         self._flag = False
         self._waitlist = []
-        self._scheduler = Pycos.scheduler()
+        self._scheduler = None
 
     def set(self):
         """May be used with 'yield'.
@@ -2280,22 +2352,22 @@ class Event(object):
         """Must be used with 'yield' as 'yield event.wait()' .
         """
         if self._flag:
-            raise StopIteration(True)
+            return(True)
         if not self._scheduler:
             self._scheduler = Pycos.scheduler()
         task = Pycos.cur_task(self._scheduler)
         if timeout is not None:
             if timeout <= 0:
-                raise StopIteration(False)
+                return(False)
         self._waitlist.append(task)
         if (yield task._await_(timeout)) is None:
             try:
                 self._waitlist.remove(task)
             except ValueError:
                 pass
-            raise StopIteration(False)
+            return(False)
         else:
-            raise StopIteration(True)
+            return(True)
 
 
 class Semaphore(object):
@@ -2305,7 +2377,7 @@ class Semaphore(object):
         assert value >= 1
         self._waitlist = []
         self._counter = value
-        self._scheduler = Pycos.scheduler()
+        self._scheduler = None
 
     def acquire(self, blocking=True):
         """Must be used with 'yield' as 'yield sem.acquire()'.
@@ -2318,9 +2390,9 @@ class Semaphore(object):
                 self._waitlist.append(task)
                 yield task._await_()
         elif self._counter == 0:
-            raise StopIteration(False)
+            return(False)
         self._counter -= 1
-        raise StopIteration(True)
+        return(True)
 
     def release(self):
         """May be used with 'yield'.
@@ -2329,7 +2401,7 @@ class Semaphore(object):
         assert self._counter > 0
         if self._waitlist:
             wake = self._waitlist.pop(0)
-            wake._proceed_(True)
+            wake._proceed_()
 
 
 class HotSwapException(Exception):
@@ -2341,25 +2413,23 @@ class HotSwapException(Exception):
     pass
 
 
-class MonitorException(Exception):
-    """This execption is used to indicate that a task being monitored has
-    finished or terminated.
+class MonitorStatus(object):
+    """This is used to indicate that a task being monitored has finished or terminated.
 
-    If 'exc' is the exception, then
+    'info' is information about status. It status is about a task, then 'info' is that task
+    instance. If status is about an exception, then 'info' is contextual information (as a string)
+    of that exception, such as location where exception occurred.
 
-    exc.args[0] is the task (either local or remote) about which this exception
-    is thrown,
+    'type' is type of 'value', or type of exception this status is sent.
 
-    If the task finished executing normally, then len(exc.args) == 2,
-    type(exc.args[1]) == tuple, len(exc.args[1]) == 2, exc.args[1][0] is
-    StopIteration and exc.args[1][1] is the value of task (i.e., last value
-    yielded). If the task is remote and value (i.e., exc.args[1][1]) is not
-    serializable, then exc.args[1][1] is just the type of that value.
+    'value' is value, such as exit value of a task or exception trace in case of failure. In case
+    of exception, 'value' may be a string (e.g., trace) but 'type' would be type of exception.
 
-    If the task terminated due to exception, then exc.args[1:] (i.e., rest of
-    exc.args) is the list of exceptions pending at the time task terminated.
     """
-    pass
+    def __init__(self, info, type, value=None):
+        self.info = info
+        self.type = type
+        self.value = value
 
 
 class _Peer(object):
@@ -2389,14 +2459,14 @@ class Task(object):
 
     __slots__ = ('_generator', '_name', '_id', '_state', '_value', '_exceptions', '_callers',
                  '_timeout', '_daemon', '_complete', '_msgs', '_monitors', '_swap_generator',
-                 '_hot_swappable', '_location', '_scheduler')
+                 '_hot_swappable', '_location', '_scheduler', '_rid')
 
     _pycos = None
     _sign = None
 
     def __init__(self, *args, **kwargs):
         self._generator = Task.__get_generator(self, *args, **kwargs)
-        self._name = '!' + self._generator.__name__
+        self._name = self._generator.__name__
         self._id = id(self)
         self._state = None
         self._value = None
@@ -2411,10 +2481,9 @@ class Task(object):
         self._hot_swappable = False
         if not Task._pycos:
             Pycos.instance()
-            if not Task._pycos:
-                Task._pycos = Pycos.instance()
         self._scheduler = self.__class__._pycos
         self._location = None
+        self._rid = None
         self._scheduler._add(self)
 
     @property
@@ -2433,7 +2502,7 @@ class Task(object):
 
         Can also be used on remotely running tasks.
         """
-        return self._name[1:]
+        return self._name
 
     @classmethod
     def scheduler(cls):
@@ -2448,36 +2517,25 @@ class Task(object):
         callable on remote tasks).
         """
         if not Task._pycos:
-            Task._pycos = Pycos.instance()
-        yield Task._locate(name, location=location, timeout=timeout)
+            Pycos.instance()
+        return((yield Task._locate(name, location=location, timeout=timeout)))
 
     @staticmethod
     def _locate(name, location, timeout):
         """Internal use only.
         """
         if not location or location in Task._pycos._locations:
-            if name[0] == '~':
+            if name[0] == '^':
                 SysTask._pycos._lock.acquire()
                 rtask = SysTask._pycos._rtasks.get(name, None)
                 SysTask._pycos._lock.release()
             else:
                 rtask = Task._pycos._rtasks.get(name, None)
             if rtask or location in Task._pycos._locations:
-                raise StopIteration(rtask)
+                return(rtask)
         req = _NetRequest('locate_task', kwargs={'name': name}, dst=location, timeout=timeout)
-        req_id = id(req)
-        req.event = Event()
-        SysTask._pycos._lock.acquire()
-        SysTask._pycos._pending_reqs[req_id] = req
-        SysTask._pycos._lock.release()
-        _Peer.send_req_to(req, location)
-        if (yield req.event.wait(timeout)) is False:
-            req.reply = None
-        SysTask._pycos._lock.acquire()
-        SysTask._pycos._pending_reqs.pop(req_id, None)
-        SysTask._pycos._lock.release()
-        rtask = req.reply
-        raise StopIteration(rtask)
+        rtask = yield _Peer.async_request(req)
+        return(rtask)
 
     def register(self, name=None):
         """Register this task so tasks running on a remote (peer) pycos can
@@ -2487,11 +2545,11 @@ class Task(object):
             logger.warning('"register" is not allowed for remote tasks')
             return -1
         if name:
-            if not isinstance(name, str) or name[0] == '~':
+            if not isinstance(name, str) or name[0] == '^':
                 logger.warning('Invalid name "%s" to register task ignored', name)
                 return -1
             if self._scheduler != Task._pycos:
-                name = '~' + name
+                name = '^' + name
         else:
             name = self._name
         return self._scheduler._register_task(self, name)
@@ -2503,7 +2561,7 @@ class Task(object):
             return -1
         if name:
             if self._scheduler != Task._pycos:
-                name = '~' + name
+                name = '^' + name
         else:
             name = self._name
         return self._scheduler._unregister_task(self, name)
@@ -2552,9 +2610,8 @@ class Task(object):
         Can also be used on remotely running tasks.
         """
         if self._location:
-            request = _NetRequest('send', kwargs={'message': message, 'name': self._name,
-                                                  'task': self._id},
-                                  dst=self._location, timeout=MsgTimeout)
+            kwargs = {'message': message, 'name': self._name, 'task': self._id, 'rid': self._rid}
+            request = _NetRequest('send', kwargs=kwargs, dst=self._location, timeout=MsgTimeout)
             # request is queued for asynchronous processing
             if _Peer.send_req(request) != 0:
                 logger.warning('remote task at %s may not be valid', self._location)
@@ -2574,20 +2631,17 @@ class Task(object):
         before timeout, and if it is < 0, then the (remote) task is not valid.
         """
         if self._location:
-            request = _NetRequest('deliver', kwargs={'message': message, 'name': self._name,
-                                                     'task': self._id},
-                                  dst=self._location, timeout=timeout)
+            kwargs = {'message': message, 'name': self._name, 'task': self._id, 'rid': self._rid}
+            request = _NetRequest('deliver', kwargs=kwargs, dst=self._location, timeout=timeout)
             request.reply = -1
-            reply = yield _Peer._sync_reply(request, alarm_value=0)
-            if reply is None:
-                reply = -1
+            reply = yield _Peer.sync_reply(request, alarm_value=0)
             # if reply < 0:
             #     logger.warning('remote task at %s may not be valid', self._location)
         else:
             reply = self._scheduler._resume(self, message, Pycos._AwaitMsg_)
             if reply == 0:
                 reply = 1
-        raise StopIteration(reply)
+        return(reply)
 
     def receive(self, timeout=None, alarm_value=None):
         """Must be used with 'yield' as 'message = yield task.receive()'.
@@ -2615,14 +2669,18 @@ class Task(object):
         return self._scheduler._throw(self, *args)
 
     def value(self, timeout=None):
-        """Get last value 'yield'ed / value of StopIteration of task.
+        """Get exit "value" of task.
 
         NB: This method should _not_ be called from a task! This method is meant
         for main thread in the user program to wait for (main) task(s) it
         creates.
 
-        Once task stops (finishes) executing, the last value is returned.
+        Once task stops (finishes) executing, the value it exited with
+        'return(value)' is returned.
         """
+        if not hasattr(self, '_complete'):
+            logger.warning('task %s is not suitable for "value"', self)
+            return None
         value = None
         self._scheduler._lock.acquire()
         if self._complete is None:
@@ -2640,11 +2698,15 @@ class Task(object):
         return value
 
     def finish(self, timeout=None):
-        """Get last value 'yield'ed / value of StopIteration of task. Must be
-        used in a task with 'yield' as 'value = yield other_task.finish()'
+        """Get exit "value" of task. Must be used in a task with 'yield' as
+        'value = yield other_task.finish()'
 
-        Once task stops (finishes) executing, the last value is returned.
+        Once task stops (finishes) executing, the value it exited with
+        'return(value)' is returned.
         """
+        if not hasattr(self, '_complete'):
+            logger.warning('task %s is not suitable for "finish"', self)
+            return(None)
         value = None
         if self._complete is None:
             self._complete = Event()
@@ -2658,7 +2720,9 @@ class Task(object):
         else:
             raise RuntimeError('invalid wait on %s/%s: %s' %
                                (self._name, self._id, type(self._complete)))
-        raise StopIteration(value)
+        return(value)
+
+    __call__ = finish
 
     def terminate(self):
         """Terminate task.
@@ -2670,8 +2734,9 @@ class Task(object):
         Can also be used on remotely running tasks.
         """
         if self._location:
-            request = _NetRequest('terminate_task', kwargs={'task': self._id, 'name': self._name},
-                                  dst=self._location, timeout=MsgTimeout)
+            kwargs = {'task': self._id, 'name': self._name, 'rid': self._rid}
+            request = _NetRequest('terminate_task', kwargs=kwargs, dst=self._location,
+                                  timeout=MsgTimeout)
             if _Peer.send_req(request) != 0:
                 logger.warning('remote task at %s may not be valid', self._location)
                 return -1
@@ -2702,7 +2767,7 @@ class Task(object):
         """
         try:
             generator = Task.__get_generator(self, *args, **kwargs)
-        except:
+        except Exception:
             logger.warning('hot_swap is called with non-generator!')
             return -1
         self._swap_generator = generator
@@ -2722,13 +2787,14 @@ class Task(object):
         """
         if observe._location:
             # remote task
-            request = _NetRequest('monitor', kwargs={'monitor': self, 'name': observe._name,
-                                                     'task': observe._id},
-                                  dst=observe._location, timeout=MsgTimeout)
-            reply = yield _Peer._sync_reply(request)
+            kwargs = {'monitor': self, 'name': observe._name,
+                      'task': observe._id, 'rid': observe._rid}
+            request = _NetRequest('monitor', kwargs=kwargs, dst=observe._location,
+                                  timeout=MsgTimeout)
+            reply = yield _Peer.sync_reply(request, alarm_value=-1)
         else:
             reply = self._scheduler._monitor(self, observe)
-        raise StopIteration(reply)
+        return(reply)
 
     def notify(self, monitor):
         """Similar to 'monitor' method, except that it is invoked with local
@@ -2771,13 +2837,15 @@ class Task(object):
             kwargs = kwargs.pop('kwargs', kwargs)
         if not inspect.isgeneratorfunction(target):
             raise Exception('%s is not a generator!' % target.__name__)
-        if target.func_defaults and \
-           'task' in target.func_code.co_varnames[:target.func_code.co_argcount][-len(target.func_defaults):]:
+        if target.__defaults__ and \
+           'task' in target.__code__.co_varnames[:target.__code__.co_argcount][-len(target.__defaults__):]:
             kwargs['task'] = task
         return target(*args, **kwargs)
 
     def __getstate__(self):
-        state = {'name': self._name, 'id': str(self._id)}
+        if not self._rid:
+            self._rid = _time()
+        state = {'name': self._name, 'id': str(self._id), 'rid': self._rid}
         if self._location:
             state['location'] = self._location
         else:
@@ -2787,6 +2855,7 @@ class Task(object):
     def __setstate__(self, state):
         self._name = state['name']
         self._id = state['id']
+        self._rid = state['rid']
         self._location = state['location']
         if isinstance(self._location, Location):
             if self._location in Task._pycos._locations:
@@ -2799,7 +2868,7 @@ class Task(object):
         else:
             if isinstance(self._name, str) and len(self._name) > 1:
                 self._id = int(self._id)
-                if self._name[0] == '~':
+                if self._name[0] == '^':
                     self._scheduler = SysTask._pycos
                 else:
                     self._scheduler = Task._pycos
@@ -2825,7 +2894,7 @@ class Task(object):
         if self._location:
             return hash(str(self))
         else:
-            return hash(id(self))
+            return id(self)
 
 
 class Location(object):
@@ -2840,10 +2909,15 @@ class Location(object):
     __slots__ = ('addr', 'port')
 
     def __init__(self, host, tcp_port):
-        if re.match(r'^\d+[\.\d]+$', host) or re.match(r'^[0-9a-fA-F:]+$', host):
+        if re.match(r'\d+[\.\d]+$', host) or re.match(r'[0-9a-fA-F]*:[:0-9a-fA-F]+$', host):
             self.addr = host
         else:
-            self.addr = socket.getaddrinfo(host, 0, 0, socket.SOCK_STREAM)[0][4][0]
+            if hasattr(Pycos, 'host_ipaddr'):
+                self.addr = Pycos.host_ipaddr(host)
+            else:
+                self.addr = socket.getaddrinfo(host, 0, 0, socket.SOCK_STREAM)[0][4][0]
+            if not self.addr:
+                logger.warning('host "%s" for Location may not be valid', host)
         self.port = int(tcp_port)
 
     def __eq__(self, other):
@@ -2870,8 +2944,8 @@ class Channel(object):
     Channels can be hierarchical, and subscribers can be remote.
     """
 
-    __slots__ = ('_name', '_location', '_transform', '_subscribers', '_subscribe_event',
-                 '_scheduler')
+    __slots__ = ('_name', '_id', '_location', '_transform', '_subscribers', '_subscribe_event',
+                 '_scheduler', '_rid')
 
     _pycos = None
     _sign = None
@@ -2886,16 +2960,15 @@ class Channel(object):
         """
 
         if not Channel._pycos:
-            Channel._pycos = Pycos.instance()
-        self._scheduler = Pycos.scheduler()
-        if not self._scheduler:
-            self._scheduler = Channel._pycos
+            Pycos.instance()
+        self._scheduler = Channel._pycos
         self._location = None
+        self._id = id(self)
         if transform is not None:
             try:
                 argspec = inspect.getargspec(transform)
                 assert len(argspec.args) == 2
-            except:
+            except Exception:
                 logger.warning('invalid "transform" function ignored')
                 transform = None
         self._transform = transform
@@ -2908,9 +2981,11 @@ class Channel(object):
             self._name = name
         self._subscribers = set()
         self._subscribe_event = Event()
+        self._rid = None
         self._scheduler._lock.acquire()
+        # TODO: use name or id for storing channels?
         if self._name in self._scheduler._channels:
-            logger.warning('duplicate channel "%s"!', self._name)
+            logger.warning('Duplicate channel "%s" ignored!', self._name)
         else:
             self._scheduler._channels[self._name] = self
         self._scheduler._lock.release()
@@ -2942,25 +3017,14 @@ class Channel(object):
         be used to send/deliver messages..
         """
         if not Channel._pycos:
-            Channel._pycos = Pycos.instance()
+            Pycos.instance()
         if not location or location in Channel._pycos._locations:
             rchannel = Channel._pycos._channels.get(name, None)
             if rchannel or location in Channel._pycos._locations:
-                raise StopIteration(rchannel)
+                return(rchannel)
         req = _NetRequest('locate_channel', kwargs={'name': name}, dst=location, timeout=timeout)
-        req.event = Event()
-        req_id = id(req)
-        SysTask._pycos._lock.acquire()
-        SysTask._pycos._pending_reqs[req_id] = req
-        SysTask._pycos._lock.release()
-        _Peer.send_req_to(req, location)
-        if (yield req.event.wait(timeout)) is False:
-            req.reply = None
-        SysTask._pycos._lock.acquire()
-        SysTask._pycos._pending_reqs.pop(req_id, None)
-        SysTask._pycos._lock.release()
-        rchannel = req.reply
-        raise StopIteration(rchannel)
+        rchannel = yield _Peer.async_request(req)
+        return(rchannel)
 
     def register(self):
         """A registered channel can be located (with 'locate') by a task on a
@@ -2983,7 +3047,7 @@ class Channel(object):
         try:
             argspec = inspect.getargspec(transform)
             assert len(argspec.args) == 2
-        except:
+        except Exception:
             logger.warning('invalid "transform" function ignored')
             return -1
         self._transform = transform
@@ -3000,34 +3064,18 @@ class Channel(object):
         """
         if not isinstance(subscriber, Task) and not isinstance(subscriber, Channel):
             logger.warning('invalid subscriber ignored')
-            raise StopIteration(-1)
+            return(-1)
         if self._location:
             # remote channel
-            kwargs = {'channel': self._name}
-            kwargs['subscriber'] = subscriber
+            kwargs = {'channel': self._name, 'id': self._id, 'rid': self._rid,
+                      'subscriber': subscriber}
             request = _NetRequest('subscribe', kwargs=kwargs, dst=self._location, timeout=timeout)
-            reply = yield _Peer._sync_reply(request)
+            reply = yield _Peer.sync_reply(request, alarm_value=-1)
         else:
-            if subscriber._location:
-                if isinstance(subscriber, Task):
-                    # remote task
-                    subscriber._id = int(subscriber._id)
-                    for s in self._subscribers:
-                        if (isinstance(s, Task) and s._id == subscriber._id and
-                            s._location == subscriber._location):
-                            subscriber = s
-                            break
-                elif isinstance(subscriber, Channel):
-                    # remote channel
-                    for s in self._subscribers:
-                        if (isinstance(s, Channel) and s._name == subscriber._name and
-                            s._location == subscriber._location):
-                            subscriber = s
-                            break
             self._subscribers.add(subscriber)
             self._subscribe_event.set()
             reply = 0
-        raise StopIteration(reply)
+        return(reply)
 
     def unsubscribe(self, subscriber, timeout=None):
         """Must be called with 'yield' as, for example,
@@ -3039,37 +3087,22 @@ class Channel(object):
         """
         if not isinstance(subscriber, Task) and not isinstance(subscriber, Channel):
             logger.warning('invalid subscriber ignored')
-            raise StopIteration(-1)
+            return(-1)
         if self._location:
             # remote channel
-            kwargs = {'channel': self._name}
-            kwargs['subscriber'] = subscriber
-            request = _NetRequest('unsubscribe', kwargs=kwargs, dst=self._location, timeout=timeout)
-            reply = yield _Peer._sync_reply(request)
+            kwargs = {'channel': self._name, 'id': self._id, 'rid': self._rid,
+                      'subscriber': subscriber}
+            request = _NetRequest('unsubscribe', kwargs=kwargs, dst=self._location,
+                                  timeout=timeout)
+            reply = yield _Peer.sync_reply(request, alarm_value=-1)
         else:
-            if subscriber._location:
-                if isinstance(subscriber, Task):
-                    # remote task
-                    subscriber._id = int(subscriber._id)
-                    for s in self._subscribers:
-                        if (isinstance(s, Task) and s._id == subscriber._id and
-                            s._location == subscriber._location):
-                            subscriber = s
-                            break
-                elif isinstance(subscriber, Channel):
-                    # remote channel
-                    for s in self._subscribers:
-                        if (isinstance(s, Channel) and s._name == subscriber._name and
-                            s._location == subscriber._location):
-                            subscriber = s
-                            break
             try:
                 self._subscribers.remove(subscriber)
             except KeyError:
                 reply = -1
             else:
                 reply = 0
-        raise StopIteration(reply)
+        return(reply)
 
     def send(self, message):
         """Message is sent to currently registered subscribers.
@@ -3078,8 +3111,8 @@ class Channel(object):
         """
         if self._location:
             # remote channel
-            request = _NetRequest('send', kwargs={'message': message, 'channel': self._name},
-                                  dst=self._location, timeout=MsgTimeout)
+            kwargs = {'channel': self._name, 'id': self._id, 'rid': self._rid, 'message': message}
+            request = _NetRequest('send', kwargs=kwargs, dst=self._location, timeout=MsgTimeout)
             # request is queued for asynchronous processing
             if _Peer.send_req(request) != 0:
                 logger.warning('remote channel at %s may not be valid', self._location)
@@ -3088,7 +3121,7 @@ class Channel(object):
             if self._transform:
                 try:
                     message = self._transform(self.name, message)
-                except:
+                except Exception:
                     message = None
                 if message is None:
                     return 0
@@ -3115,39 +3148,36 @@ class Channel(object):
         Can also be used on remote channels.
         """
         if not isinstance(n, int) or n < 0:
-            raise StopIteration(-1)
+            return(-1)
         if self._location:
             # remote channel
-            request = _NetRequest('deliver', kwargs={'message': message, 'channel': self._name,
-                                                     'n': n},
-                                  dst=self._location, timeout=timeout)
-            request.reply = -1
-            reply = yield _Peer._async_reply(request, alarm_value=0)
-            if reply is None:
-                reply = -1
+            kwargs = {'channel': self._name, 'id': self._id, 'rid': self._rid, 'message': message,
+                      'n': n}
+            request = _NetRequest('deliver', kwargs=kwargs, dst=self._location, timeout=timeout)
+            reply = yield _Peer.async_reply(request, alarm_value=0)
             # if reply < 0:
             #     logger.warning('remote channel "%s" at %s may have gone away!',
             #                    self._name, self._location)
-            raise StopIteration(reply)
+            return(reply)
         else:
             if self._transform:
                 try:
                     message = self._transform(self.name, message)
-                except:
+                except Exception:
                     message = None
                 if message is None:
-                    raise StopIteration(0)
+                    return(0)
             subscribers = list(self._subscribers)
             if n:
                 while len(subscribers) < n:
                     start = _time()
                     self._subscribe_event.clear()
                     if (yield self._subscribe_event.wait(timeout)) is False:
-                        raise StopIteration(0)
+                        return(0)
                     if timeout is not None:
                         timeout -= _time() - start
                         if timeout <= 0:
-                            raise StopIteration(0)
+                            return(0)
                     subscribers = list(self._subscribers)
 
             info = {'reply': 0, 'pending': len(subscribers), 'success': 0,
@@ -3163,7 +3193,7 @@ class Channel(object):
                             info['done'].set()
                     elif reply < 0:
                         info['invalid'].append(subscriber)
-                except:
+                except Exception:
                     pass
                 info['pending'] -= 1
                 if info['pending'] == 0:
@@ -3189,7 +3219,7 @@ class Channel(object):
                 for subscriber in info['invalid']:
                     Task(_unsub, self, subscriber)
 
-            raise StopIteration(info['reply'])
+            return(info['reply'])
 
     def close(self):
         if not self._location:
@@ -3200,7 +3230,9 @@ class Channel(object):
             self._scheduler._lock.release()
 
     def __getstate__(self):
-        state = {'name': self._name}
+        if not self._rid:
+            self._rid = _time()
+        state = {'name': self._name, 'id': self._id, 'rid': self._rid}
         if self._location:
             state['location'] = self._location
         else:
@@ -3209,6 +3241,8 @@ class Channel(object):
 
     def __setstate__(self, state):
         self._name = state['name']
+        self._id = state['id']
+        self._rid = state['rid']
         self._transform = None
         self._location = state['location']
         if isinstance(self._location, Location):
@@ -3290,17 +3324,17 @@ class CategorizeMessages(object):
         c = self._categories.get(category, None)
         if c:
             msg = c.popleft()
-            raise StopIteration(msg)
+            return(msg)
         if timeout:
             start = _time()
         while 1:
             msg = yield self._task.receive(timeout=timeout, alarm_value=alarm_value)
             if msg == alarm_value:
-                raise StopIteration(msg)
+                return(msg)
             for categorize in self._categorize:
                 c = categorize(msg)
                 if c == category:
-                    raise StopIteration(msg)
+                    return(msg)
                 if c is not None:
                     bucket = self._categories.get(c, None)
                     if not bucket:
@@ -3317,7 +3351,7 @@ class CategorizeMessages(object):
     recv = receive
 
 
-class Pycos(object):
+class Pycos(object, metaclass=Singleton):
     """Task scheduler.
 
     The scheduler is created and started automatically (when a task is created,
@@ -3325,32 +3359,31 @@ class Pycos(object):
     distributed programming, Pycos in netpycos module should be used.
     """
 
-    __metaclass__ = Singleton
-    _instance = None
     _schedulers = {}
 
-    # in _scheduled set, waiting for turn to execute
+    # waiting for turn to execute, in _scheduled set
     _Scheduled = 1
-    # in _scheduled, currently executing
+    # currently executing, in _scheduled set
     _Running = 2
-    # in _suspended, waiting for resume
+    # waiting for resume
     _Suspended = 3
-    # in _suspended, waiting for I/O operation
+    # waiting for I/O operation
     _AwaitIO_ = 4
-    # in _suspended, waiting for message
+    # waiting for message
     _AwaitMsg_ = 5
 
     def __init__(self):
-        if not Pycos._instance:
-            Pycos._instance = self
         self._notifier = _AsyncNotifier()
+        if not Task._pycos:
+            Task._pycos = Channel._pycos = self
+            logger.info('version %s (Python %s) with %s I/O notifier',
+                        __version__, platform.python_version(), self._notifier._poller_name)
         self._locations = set()
         self._location = None
         self._name = ''
         self.__cur_task = None
         self._tasks = {}
         self._scheduled = set()
-        self._suspended = set()
         self._timeouts = []
         self._quit = False
         self._daemons = 0
@@ -3366,17 +3399,13 @@ class Pycos(object):
         Pycos._schedulers[id(self._scheduler)] = self
         self._scheduler.daemon = True
         self._scheduler.start()
-        if Pycos._instance == self:
-            atexit.register(self.finish)
-            logger.info('version %s with %s I/O notifier', __version__, self._notifier._poller_name)
+        atexit.register(self.finish)
 
     @classmethod
     def instance(cls, *args, **kwargs):
         """Returns (singleton) instance of Pycos.
         """
-        if not cls._instance:
-            cls._instance = cls(*args, **kwargs)
-        return cls._instance
+        return cls(*args, **kwargs)
 
     @property
     def location(self):
@@ -3417,7 +3446,7 @@ class Pycos(object):
         self._tasks[task._id] = task
         self._complete.clear()
         task._state = Pycos._Scheduled
-        self._scheduled.add(task._id)
+        self._scheduled.add(task)
         if self._polling and len(self._scheduled) == 1:
             self._notifier.interrupt()
         self._lock.release()
@@ -3426,13 +3455,11 @@ class Pycos(object):
         """Internal use only.
         """
         self._lock.acquire()
-        try:
-            self._scheduled.remove(task._id)
-        except KeyError:
-            ret = -1
-        else:
-            self._tasks.pop(task._id, None)
-            ret = 0
+        ret = -1
+        if task._state == Pycos._Scheduled or task._state == Pycos._Running:
+            if self._tasks.pop(task._id, None) == task:
+                self._scheduled.discard(task)
+                ret = 0
         self._lock.release()
         return ret
 
@@ -3462,9 +3489,9 @@ class Pycos(object):
         self._lock.acquire()
         tid = task._id
         task = self._tasks.get(tid, None)
-        if task is None or not isinstance(monitor, Task):
+        if (not task) or (not isinstance(monitor, Task)):
             self._lock.release()
-            logger.warning('monitor: invalid task: %s / %s', task, type(monitor))
+            logger.warning('monitor: invalid task: %s / %s', tid, type(monitor))
             return -1
         task._monitors.add(monitor)
         self._lock.release()
@@ -3478,7 +3505,6 @@ class Pycos(object):
             self._lock.release()
             logger.warning('invalid "suspend" - "%s" != "%s"', task, self.__cur_task)
             return -1
-        tid = task._id
         if state == Pycos._AwaitMsg_ and task._msgs:
             s, update = task._msgs[0]
             if s == state:
@@ -3497,28 +3523,26 @@ class Pycos(object):
                 return alarm_value
             else:
                 task._timeout = _time() + timeout + 0.0001
-                heappush(self._timeouts, (task._timeout, tid, alarm_value))
-        self._scheduled.discard(tid)
-        self._suspended.add(tid)
+                heappush(self._timeouts, (task._timeout, task._id, alarm_value))
+        self._scheduled.discard(task)
         task._state = state
         self._lock.release()
         return 0
 
-    def _resume(self, task, update, state):
+    def _resume(self, target, update, state):
         """Internal use only. See resume in Task.
         """
         self._lock.acquire()
-        tid = task._id
+        tid = target._id
         task = self._tasks.get(tid, None)
-        if not task:
+        if not task or task._name != target._name:
             self._lock.release()
             logger.warning('invalid task %s to resume', tid)
             return -1
         if task._state == state:
             task._timeout = None
             task._value = update
-            self._suspended.discard(tid)
-            self._scheduled.add(tid)
+            self._scheduled.add(task)
             task._state = Pycos._Scheduled
             if self._polling and len(self._scheduled) == 1:
                 self._notifier.interrupt()
@@ -3535,16 +3559,15 @@ class Pycos(object):
         self._lock.acquire()
         tid = task._id
         task = self._tasks.get(tid, None)
-        if task is None or task._state not in (Pycos._Scheduled, Pycos._Suspended,
-                                               Pycos._AwaitIO_, Pycos._AwaitMsg_):
+        if ((not task) or task._state not in (Pycos._Scheduled, Pycos._Suspended,
+                                              Pycos._AwaitIO_, Pycos._AwaitMsg_)):
             logger.warning('invalid task %s to throw exception', tid)
             self._lock.release()
             return -1
         task._timeout = None
         task._exceptions.append(args)
         if task._state in (Pycos._AwaitIO_, Pycos._Suspended, Pycos._AwaitMsg_):
-            self._suspended.discard(tid)
-            self._scheduled.add(tid)
+            self._scheduled.add(task)
             task._state = Pycos._Scheduled
             if self._polling and len(self._scheduled) == 1:
                 self._notifier.interrupt()
@@ -3557,22 +3580,21 @@ class Pycos(object):
         self._lock.acquire()
         tid = task._id
         task = self._tasks.get(tid, None)
-        if task is None:
+        if not task:
             logger.warning('invalid task %s to terminate', tid)
             self._lock.release()
             return -1
         # TODO: if currently waiting I/O or holding locks, warn?
         if task._state == Pycos._Running:
-            logger.warning('task to terminate %s/%s is running', task._name, tid)
+            logger.warning('task to terminate %s is running', task)
         else:
-            self._suspended.discard(tid)
-            self._scheduled.add(tid)
+            self._scheduled.add(task)
             task._state = Pycos._Scheduled
             task._timeout = None
             task._callers = []
             if self._polling and len(self._scheduled) == 1:
                 self._notifier.interrupt()
-        task._exceptions.append((GeneratorExit, GeneratorExit('close')))
+        task._exceptions.append((GeneratorExit, GeneratorExit('terminated')))
         self._lock.release()
         return 0
 
@@ -3582,7 +3604,7 @@ class Pycos(object):
         self._lock.acquire()
         tid = task._id
         task = self._tasks.get(tid, None)
-        if task is None:
+        if not task:
             logger.warning('invalid task %s to swap', tid)
             self._lock.release()
             return -1
@@ -3594,23 +3616,20 @@ class Pycos(object):
             task._timeout = None
             # TODO: check that another HotSwapException is not pending?
             if task._state is None:
-                # assert task._id not in self._scheduled
-                # assert task._id not in self._suspended
                 task._generator = task._swap_generator
                 task._value = None
                 if task._complete == 0:
                     task._complete = None
                 elif isinstance(task._complete, Event):
                     task._complete.clear()
-                self._scheduled.add(tid)
+                self._scheduled.add(task)
                 task._state = Pycos._Scheduled
                 task._hot_swappable = False
             else:
                 task._exceptions.append((HotSwapException, HotSwapException(task._swap_generator)))
                 # assert task._state != Pycos._AwaitIO_
                 if task._state in (Pycos._Suspended, Pycos._AwaitMsg_):
-                    self._suspended.discard(tid)
-                    self._scheduled.add(tid)
+                    self._scheduled.add(task)
                     task._state = Pycos._Scheduled
             if self._polling and len(self._scheduled) == 1:
                 self._notifier.interrupt()
@@ -3643,21 +3662,14 @@ class Pycos(object):
                 now = _time() + 0.0001
                 while self._timeouts and self._timeouts[0][0] <= now:
                     timeout, tid, alarm_value = heappop(self._timeouts)
-                    # assert timeout <= now
                     task = self._tasks.get(tid, None)
                     if not task or task._timeout != timeout:
                         continue
-                    # if task._state not in (Pycos._AwaitIO_, Pycos._Suspended,
-                    #                        Pycos._AwaitMsg_):
-                    #     logger.warning('task %s/%s is in state %s for resume; ignored',
-                    #                    task._name, task._id, task._state)
-                    #     continue
                     task._timeout = None
-                    self._suspended.discard(tid)
-                    self._scheduled.add(tid)
                     task._state = Pycos._Scheduled
+                    self._scheduled.add(task)
                     task._value = alarm_value
-            scheduled = [self._tasks[tid] for tid in self._scheduled]
+            scheduled = list(self._scheduled)
             self._lock.release()
 
             for task in scheduled:
@@ -3668,22 +3680,22 @@ class Pycos(object):
                     if task._exceptions:
                         exc = task._exceptions.pop(0)
                         if exc[0] == GeneratorExit:
-                            task._generator.close()
-                            retval = task._value
+                            # task._generator.close()
+                            raise Exception(exc[1])
                         else:
                             retval = task._generator.throw(*exc)
                     else:
                         retval = task._generator.send(task._value)
-                except:
+                except Exception:
                     self._lock.acquire()
                     exc = sys.exc_info()
                     if exc[0] == StopIteration:
                         v = exc[1].args
+                        # assert isinstance(v, tuple)
                         if v:
-                            if len(v) == 1:
-                                task._value = v[0]
-                            else:
-                                task._value = v
+                            task._value = v[0]
+                        else:
+                            task._value = None
                         task._exceptions = []
                     elif exc[0] == HotSwapException:
                         v = exc[1].args
@@ -3691,7 +3703,7 @@ class Pycos(object):
                             task._hot_swappable and not task._callers):
                             try:
                                 task._generator.close()
-                            except:
+                            except Exception:
                                 logger.warning('closing %s/%s raised exception: %s',
                                                task._name, task._id, traceback.format_exc())
                             task._generator = v[0]
@@ -3707,7 +3719,16 @@ class Pycos(object):
                         self._lock.release()
                         continue
                     else:
-                        task._exceptions.append(exc)
+                        v = exc[1].args
+                        if isinstance(v, tuple) and len(v) > 0 and type(v[0]) == GeneratorExit:
+                            try:
+                                task._generator.close()
+                            except Exception:
+                                logger.debug('closing %s raised exception: %s',
+                                             task.name, traceback.format_exc())
+                            task._exceptions = [(GeneratorExit, v[0], None)]
+                        else:
+                            task._exceptions.append(exc)
 
                     if task._callers:
                         # return to caller
@@ -3721,77 +3742,62 @@ class Pycos(object):
                         elif task._exceptions:
                             # exception in callee, restore saved value
                             task._value = caller[1]
-                            self._suspended.discard(task._id)
-                            self._scheduled.add(task._id)
+                            self._scheduled.add(task)
                             task._state = Pycos._Scheduled
                         elif task._state == Pycos._Running:
                             task._state = Pycos._Scheduled
                     else:
                         if task._exceptions:
-                            exc = task._exceptions[0]
-                            assert isinstance(exc, tuple)
-                            if len(exc) == 2:
-                                exc = ''.join(traceback.format_exception_only(*exc))
+                            if task._exceptions[-1][0] == GeneratorExit:
+                                task._exceptions = []
                             else:
-                                exc = ''.join(traceback.format_exception(*exc))
-                            logger.warning('uncaught exception in %s:\n%s', task, exc)
-                            try:
-                                task._generator.close()
-                            except:
-                                logger.warning('closing %s raised exception: %s',
-                                               task._name, traceback.format_exc())
+                                exc = task._exceptions[0]
+                                if len(exc) == 2 or not exc[2]:
+                                    exc_trace = ''.join(traceback.format_exception_only(*exc[:2]))
+                                else:
+                                    exc_trace = ''.join(traceback.format_exception(exc[0], exc[1],
+                                                                                   exc[2].tb_next))
+                                logger.warning('uncaught exception in %s:\n%s', task, exc_trace)
+                                try:
+                                    task._generator.close()
+                                except Exception:
+                                    logger.warning('closing %s raised exception: %s',
+                                                   task._name, traceback.format_exc())
+                                task._value = MonitorStatus(task, exc[0], exc_trace)
+
                         # delete this task
-                        if task._state not in (Pycos._Scheduled, Pycos._Running):
-                            logger.warning('task "%s" is in state: %s', task._name, task._state)
+                        # if task._state not in (Pycos._Scheduled, Pycos._Running):
+                        #     logger.warning('task "%s" is in state: %s', task._name, task._state)
                         monitors = list(task._monitors)
                         for monitor in monitors:
-                            if monitor._location:
-                                # remote monitor; prepare serializable data
-                                if task._exceptions:
-                                    exc = task._exceptions[0][:2]
-                                    try:
-                                        serialize(exc[1])
-                                    except pickle.PicklingError:
-                                        # send only the type
-                                        exc = (exc[0], type(exc[1].args[0]))
-                                    exc = MonitorException(task, exc)
-                                    task._exceptions = []
-                                else:
-                                    exc = task._value
-                                    try:
-                                        serialize(exc)
-                                    except pickle.PicklingError:
-                                        exc = type(exc)
-                                    exc = MonitorException(task, (StopIteration, exc))
-                                monitor.send(exc)
+                            if task._exceptions:
+                                exc = task._exceptions[0]
+                                exc = MonitorStatus(task, exc[0], exc_trace)
                             else:
-                                if task._exceptions:
-                                    exc = MonitorException(task, task._exceptions[0])
-                                else:
-                                    exc = MonitorException(task, (StopIteration, task._value))
-                                if monitor.send(exc):
-                                    logger.warning('monitor for %s/%s is not valid!',
-                                                   task._name, task._id)
-                                    task._monitors.discard(monitor)
-                        if not task._monitors or not task._exceptions:
-                            task._msgs.clear()
-                            task._monitors.clear()
-                            task._exceptions = []
-                            if self._tasks.pop(task._id, None) != task:
-                                logger.warning('invalid task: %s, %s', task._id, task._state)
-                            if task._daemon is True:
-                                self._daemons -= 1
-                        elif task._monitors:
-                            # a (local) monitor can restart it with hot_swap
-                            task._hot_swappable = True
-                            task._exceptions = []
-                        task._state = None
+                                exc = (StopIteration, task._value)
+                                if monitor._location:
+                                    try:
+                                        serialize(task._value)
+                                    except Exception as exc:
+                                        exc = (type(exc), traceback.format_exc())
+                                exc = MonitorStatus(task, exc[0], exc[1])
+                            if monitor.send(exc):
+                                logger.warning('monitor for %s is not valid!', task.name)
+                                task._monitors.discard(monitor)
+
+                        task._msgs.clear()
+                        task._monitors.clear()
+                        task._exceptions = []
+                        if task._daemon is True:
+                            self._daemons -= 1
+                        self._tasks.pop(task._id, None)
                         task._generator = None
+                        task._state = None
                         if task._complete:
                             task._complete.set()
                         else:
                             task._complete = 0
-                        self._scheduled.discard(task._id)
+                        self._scheduled.discard(task)
                         if len(self._tasks) == self._daemons:
                             self._complete.set()
                     self._lock.release()
@@ -3814,7 +3820,7 @@ class Pycos(object):
             self.__cur_task = None
 
         self._lock.acquire()
-        for task in self._tasks.itervalues():
+        for task in self._tasks.values():
             logger.debug('terminating task %s/%s%s', task._name, task._id,
                          ' (daemon)' if task._daemon else '')
             self.__cur_task = task
@@ -3822,7 +3828,7 @@ class Pycos(object):
             while task._generator:
                 try:
                     task._generator.close()
-                except:
+                except Exception:
                     logger.warning('closing %s raised exception: %s',
                                    task._generator.__name__, traceback.format_exc())
                 if task._callers:
@@ -3834,20 +3840,20 @@ class Pycos(object):
             else:
                 task._complete = 0
         self._scheduled.clear()
-        self._suspended.clear()
         self._tasks.clear()
         self._channels.clear()
         self._timeouts = []
-        self.__class__._instance = None
         self._quit = True
+        Pycos._schedulers.pop(id(threading.current_thread()))
         self._lock.release()
+        self._notifier.terminate()
         if self == Task._pycos:
             logger.debug('pycos terminated')
         else:
             logger.debug('pycos %s terminated', self.location)
         self._complete.set()
 
-    def _exit(self, await_non_daemons):
+    def _exit(self, await_non_daemons, reset):
         """Internal use only.
         """
         if self._quit:
@@ -3858,7 +3864,7 @@ class Pycos(object):
                              (len(self._tasks) - self._daemons))
         else:
             self._lock.acquire()
-            for task in self._tasks.itervalues():
+            for task in self._tasks.values():
                 if not task._daemon:
                     task._daemon = True
                     self._daemons += 1
@@ -3874,7 +3880,7 @@ class Pycos(object):
                 priority, func, fargs, fkwargs = self._atexit.pop()
                 try:
                     func(*fargs, **fkwargs)
-                except:
+                except Exception:
                     logger.warning('running %s failed:', func.__name__)
                     logger.warning(traceback.format_exc())
             self._complete.wait()
@@ -3895,6 +3901,9 @@ class Pycos(object):
         else:
             self._lock.release()
         logger.shutdown()
+        if reset:
+            Task._pycos = Channel._pycos = None
+            Singleton.discard(self.__class__)
 
     def finish(self):
         """Wait until all non-daemon tasks finish and then shutdown the
@@ -3902,26 +3911,35 @@ class Pycos(object):
 
         Should be called from main program (or a thread, but _not_ from tasks).
         """
-        self._exit(True)
+        self._exit(True, True)
 
     def terminate(self):
         """Kill all non-daemon tasks and shutdown the scheduler.
 
         Should be called from main program (or a thread, but _not_ from tasks).
         """
-        self._exit(False)
+        self._exit(False, True)
 
-    def join(self, show_running=False):
+    def join(self, show_running=False, timeout=None):
         """Wait for currently scheduled tasks to finish. Pycos continues to
         execute, so new tasks can be added if necessary.
         """
         if show_running:
             self._lock.acquire()
-            for task in self._tasks.itervalues():
+            for task in self._tasks.values():
                 logger.info('waiting for %s/%s%s', task._name, task._id,
                             ' (daemon)' if task._daemon else '')
             self._lock.release()
-        self._complete.wait()
+        self._complete.wait(timeout)
+        if self._complete.is_set():
+            return True
+        else:
+            return False
+
+    def is_alive(self):
+        """Returns whether scheduler thread is alive.
+        """
+        return self._scheduler.is_alive()
 
     def atexit(self, priority, func, *fargs, **fkwargs):
         """Function 'func' will be called after the scheduler has
@@ -3935,17 +3953,31 @@ class Pycos(object):
         self._atexit.insert(i, item)
         self._lock.release()
 
+    def drop_atexit(self, priority, func):
+        """Drop scheduled 'func' at 'priority'. If multiple 'func' at same 'priority' are
+        scheduled with different arguments, all of them are dropped.
+        """
+        item = (priority, func)
+        self._lock.acquire()
+        i = bisect_left(self._atexit, item)
+        while (i < len(self._atexit) and
+               (self._atexit[i][0] == priority and self._atexit[i][1] == func)):
+            self._atexit.pop(i)
+        self._lock.release()
+
     def _register_channel(self, channel, name):
         """Internal use only.
         """
         self._lock.acquire()
-        cur = self._rchannels.get(name, None)
-        if cur is None or self._channels.get(cur.name, None) is None:
-            self._rchannels[name] = channel
-            ret = 0
-        else:
+        if name in self._rchannels:
             logger.warning('channel "%s" is already registered', name)
             ret = -1
+        elif channel.name not in self._channels:
+            logger.warning('channel "%s" is invalid', channel)
+            ret = -1
+        else:
+            self._rchannels[name] = channel
+            ret = 0
         self._lock.release()
         return ret
 
@@ -3953,7 +3985,8 @@ class Pycos(object):
         """Internal use only.
         """
         self._lock.acquire()
-        if self._rchannels.pop(name, None) is channel:
+        if self._rchannels.get(name, None) is channel:
+            self._rchannels.pop(name, None)
             ret = 0
         else:
             # logger.warning('channel "%s" is not registered', name)
@@ -3965,13 +3998,15 @@ class Pycos(object):
         """Internal use only.
         """
         self._lock.acquire()
-        cur = self._rtasks.get(name, None)
-        if cur is None or self._tasks.get(cur._id, None) is None:
-            self._rtasks[name] = task
-            ret = 0
-        else:
+        if name in self._rtasks:
             logger.warning('task "%s" is already registered', name)
             ret = -1
+        elif task._id not in self._tasks:
+            logger.warning('task "%s" is invalid', task)
+            ret = -1
+        else:
+            self._rtasks[name] = task
+            ret = 0
         self._lock.release()
         return ret
 
@@ -3979,7 +4014,8 @@ class Pycos(object):
         """Internal use only.
         """
         self._lock.acquire()
-        if self._rtasks.pop(name, None) is task:
+        if self._rtasks.get(name, None) is task:
+            self._rtasks.pop(name, None)
             ret = 0
         else:
             # logger.warning('task "%s" is not registered', name)
@@ -4003,7 +4039,7 @@ class AsyncThreadPool(object):
         self._scheduler = Pycos.scheduler()
         self._num_threads = num_threads
         self._task_queue = queue.Queue()
-        for n in xrange(num_threads):
+        for n in range(num_threads):
             tasklet = threading.Thread(target=self._tasklet)
             tasklet.daemon = True
             tasklet.start()
@@ -4018,7 +4054,7 @@ class AsyncThreadPool(object):
             try:
                 val = target(*args, **kwargs)
                 task._proceed_(val)
-            except:
+            except Exception:
                 task.throw(*sys.exc_info())
             finally:
                 self._task_queue.task_done()
@@ -4058,7 +4094,7 @@ class AsyncThreadPool(object):
         """Wait for all scheduled tasks to complete and terminate
         threads.
         """
-        for n in xrange(self._num_threads):
+        for n in range(self._num_threads):
             self._task_queue.put(None)
         self._task_queue.join()
 

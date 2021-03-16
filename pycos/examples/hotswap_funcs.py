@@ -13,11 +13,11 @@ def server_proc2(fname, task=None):
         except pycos.HotSwapException as exc:
             gen = exc.args[0]
             if gen.__name__.startswith('server_proc'):
-                print('\nreplacing with function: %s, %s\n' % \
-                      (gen.__name__, gen.gi_code.co_argcount))
+                print('\nreplacing with function: %s\n' % (gen.__name__))
                 raise
             else:
                 print('\n** ignoring hot swap function %s' % (gen.__name__))
+
 
 # 'client_proc2' replaces 'client' task's function
 def client_proc2(server, i=42, task=None):
@@ -28,4 +28,3 @@ def client_proc2(server, i=42, task=None):
         server.send(i)
         i += 2
         yield task.sleep(random.uniform(2, 6))
-

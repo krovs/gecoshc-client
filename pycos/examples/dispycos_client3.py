@@ -7,10 +7,6 @@
 # done in 'dispycos_client1.py', remote task sends the result back to client
 # with message passing.
 
-import pycos.netpycos as pycos
-from pycos.dispycos import *
-
-
 # objects of C are exchanged between client and servers
 class C(object):
     def __init__(self, i):
@@ -21,9 +17,8 @@ class C(object):
         return '%d: %s' % (self.i, self.n)
 
 
-# this generator function is sent to remote dispycos servers to run tasks
-# there
-def compute(obj, client, task=None):
+# this generator function is sent to remote dispycos servers to run tasks there
+def compute(obj, result_task, task=None):
     # obj is an instance of C
     import math
     # this task and client can use message passing
@@ -31,22 +26,25 @@ def compute(obj, client, task=None):
     yield task.sleep(obj.n)
     obj.n = math.sqrt(obj.n)
     # send result back to client
-    yield client.deliver(obj, timeout=5)
+    yield result_task.deliver(obj, timeout=5)
 
 
-def client_proc(computation, njobs, task=None):
-    # schedule computation with the scheduler; scheduler accepts one computation
-    # at a time, so if scheduler is shared, the computation is queued until it
-    # is done with already scheduled computations
-    if (yield computation.schedule()):
-        raise Exception('Could not schedule computation')
+# -- code below is executed locally --
+
+# local task submits computation tasks at dispycos servers
+def client_proc(njobs, task=None):
+    # schedule client with the scheduler; scheduler accepts one client
+    # at a time, so if scheduler is shared, the client is queued until it
+    # is done with already scheduled clients
+    if (yield client.schedule()):
+        raise Exception('Could not schedule client')
 
     # create a separate task to receive results, so they can be processed
     # as soon as received
     def recv_results(task=None):
         for i in range(njobs):
-            msg = yield task.receive()
-            print('    result for job %d: %s' % (i, msg))
+            result = yield task.receive()
+            print('    result for job %d: %s' % (i, result))
 
     # remote tasks send replies as messages to this task
     results_task = pycos.Task(recv_results)
@@ -56,25 +54,27 @@ def client_proc(computation, njobs, task=None):
         cobj = C(i)
         cobj.n = random.uniform(5, 10)
         # as noted in 'dispycos_client2.py', 'run' method is used to run jobs
-        # sequentially; use 'run_async' to run multiple jobs on one server
+        # sequentially; use 'io_rtask' to run multiple jobs on one server
         # concurrently
         print('  request %d: %s' % (i, cobj.n))
-        rtask = yield computation.run(compute, cobj, results_task)
+        rtask = yield client.rtask(compute, cobj, results_task)
         if not isinstance(rtask, pycos.Task):
-            print('failed to create rtask %s: %s' % (i, rtask))
+            print('  ** rtask failed %s: %s' % (i, rtask))
 
-    # wait for all results and close computation
-    yield computation.close()
+    # not required to wait for results_task (client.close will wait for results), but improves
+    # clarity
+    yield results_task.finish()
+    # wait for all results and close client
+    yield client.close()
 
 
 if __name__ == '__main__':
     import random, sys
-    # pycos.logger.setLevel(pycos.Logger.DEBUG)
-    # if scheduler is not already running (on a node as a program),
-    # start it (private scheduler):
-    Scheduler()
-    # send generator function and class C (as the computation uses
-    # objects of C)
-    computation = Computation([compute, C])
+    import pycos
+    import pycos.netpycos
+    from pycos.dispycos import *
+
+    # send generator function and class C (as the messages sent / received are objects of C)
+    client = Client([compute, C])
     # run 10 (or given number of) jobs
-    pycos.Task(client_proc, computation, 10 if len(sys.argv) < 2 else int(sys.argv[1])).value()
+    pycos.Task(client_proc, 10 if len(sys.argv) < 2 else int(sys.argv[1]))

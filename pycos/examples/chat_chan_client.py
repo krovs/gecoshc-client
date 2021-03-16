@@ -4,8 +4,10 @@
 # nodes on local network, along with 'chat_chan_server.py'; text typed in a
 # client is broadcast over a channel to all clients
 
-import sys, logging
-import pycos.netpycos as pycos
+import sys
+import pycos
+import pycos.netpycos
+
 
 # this task receives messages from server
 def recv_proc(client_id, task=None):
@@ -17,15 +19,19 @@ def recv_proc(client_id, task=None):
             continue
         print('    %s %s' % (who, msg))
 
+
 # this task sends messages to channel (to broadcast to all clients)
 def send_proc(task=None):
     # if server is in a remote network, use 'peer' as (optionally enabling
     # streaming for efficiency):
-    # yield pycos.Pycos.instance().peer('server node/ip')
-    server = yield pycos.Task.locate('chat_server')
+    # yield pycos.Pycos.instance().peer(pycos.Location('server node/ip', port))
+    server = yield pycos.Task.locate('chat_server', timeout=5)
+    if not server:
+        print('Could not locate server')
+        return
     server.send(('join', task))
     client_id = yield task.receive()
-    
+
     # channel is at same location as server task
     channel = yield pycos.Channel.locate('chat_channel', server.location)
     recv_task = pycos.Task(recv_proc, client_id)
@@ -49,6 +55,13 @@ def send_proc(task=None):
     server.send(('quit', client_id))
     yield channel.unsubscribe(recv_task)
 
+
 if __name__ == '__main__':
-    # pycos.logger.setLevel(logging.DEBUG)
+    # pycos.logger.setLevel(pycos.logger.DEBUG)
+    # PyPI / pip packaging adjusts assertion below for Python 3.7+
+    if sys.version_info.major == 3:
+        assert sys.version_info.minor >= 7, \
+            ('"%s" is not suitable for Python version %s.%s; use file installed by pip instead' %
+             (__file__, sys.version_info.major, sys.version_info.minor))
+
     pycos.Task(send_proc)

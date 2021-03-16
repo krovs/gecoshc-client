@@ -1,29 +1,21 @@
 # Run 'dispycosnode.py' program on Amazon EC2 cloud computing and run this
 # program on local computer.
 
-# In this example ssh is used for port forwarding.  Make sure EC2 instance
-# allows inbound TCP port 9706 and any additional ports, depending on how many
-# CPUs are used by dispycosnode. Assume '54.204.242.185' is external IP address
-# of EC2 instance. Login to that node with remote port forwarding:
-# 'ssh -R # 9705:127.0.0.1:9705 54.204.242.185' (so port 9705, used by client is
-# forwarded), then run dispycosnode on EC2 server at port (starting with) 9706 with:
-# 'dispycosnode.py -d --ext_ip_addr 54.204.242.185 --tcp_ports 9706'
+#  Make sure EC2 instance allows inbound TCP port 9706 and any additional ports,
+# depending on how many CPUs are used by servers (e.g., if maximum CPUs in a
+# server is 8, allow ports 9706 to 9714). For better protection, allow
+# connection on these ports only from client IP address, or even use SSL. Start
+# dispycosnode on EC2 node with its external IP address; e.g., on an EC2 node
+# with external IP address '54.204.242.185', start dispycosnode as:
 
-# Distributed computing example where this client sends computation to remote
-# dispycos process to run as remote tasks. At any time at most one
-# computation task is scheduled at a process (due to
-# RemoteTaskScheduler). This example shows how to use 'execute' method of
-# RemoteTaskScheduler to run comutations and get their results easily.
-
-# This example can be combined with in-memory processing (see
-# 'dispycos_client9_node.py') and streaming (see 'dispycos_client6.py') for
-# efficient processing of data and communication.
+# dispycosnode.py -d --ext_ip_addr 54.204.242.185
 
 # this generator function is sent to remote dispycos servers to run
 # tasks there
 def compute(i, n, task=None):
     # 'i' is job number and 'n' is seconds to suspend task (to simulate
     # computation time)
+    print('%s started job %s with %s' % (task.location, i, n))
     yield task.sleep(n)
     return((i, n))
 
@@ -37,10 +29,10 @@ def client_proc(njobs, task=None):
     if (yield client.schedule()):
         raise Exception('Could not schedule client')
 
-    # pair EC2 node with this client with:
+    # establish communication with EC2 node with:
     yield pycos.Pycos().peer(pycos.Location('54.204.242.185', 9706))
-    # if multiple nodes are used in the network of 54.204.242.185, 'relay' option can be used to
-    # pair with all nodes with just one statement as:
+    # if multiple nodes are used, 'relay' option can be used to pair with
+    # all nodes with just one statement as:
     # yield pycos.Pycos().peer(pycos.Location('54.204.242.185', 9706), relay=True)
 
     # schedule tasks on dispycos servers
@@ -50,7 +42,7 @@ def client_proc(njobs, task=None):
         if isinstance(rtask, pycos.Task):
             rtasks.append(rtask)
         else:
-            print('  ** run failed for %s' % i)
+            print('  ** rtask failed for %s' % i)
     # wait for results
     for rtask in rtasks:
         result = yield rtask()
@@ -68,15 +60,23 @@ if __name__ == '__main__':
     import pycos.netpycos
     from pycos.dispycos import *
 
-    # pycos.logger.setLevel(pycos.Logger.DEBUG)
+    # enable debug to see progress
+    pycos.logger.setLevel(pycos.Logger.DEBUG)
     # PyPI / pip packaging adjusts assertion below for Python 3.7+
     if sys.version_info.major == 3:
         assert sys.version_info.minor >= 7, \
             ('"%s" is not suitable for Python version %s.%s; use file installed by pip instead' %
              (__file__, sys.version_info.major, sys.version_info.minor))
 
-    pycos.Pycos(host='127.0.0.1', tcp_port=9705, udp_port=9705)
-    # send 'compute' to remote servers to run tasks when submitted
+    config = {}  # add any additional parameters
+
+    # if client is behind a router, configure router's firewall to forward port
+    # 9705 to client's IP address and use router's external IP address (i.e.,
+    # addressable from outside world)
+    config['ext_ip_addr'] = 'router.ext.ip'
+    pycos.Pycos(**config)
+
+    # send 'compute' to dispycos servers to run tasks when jobs are scheduled
     client = Client([compute])
-    njobs = 10 if len(sys.argv) == 1 else int(sys.argv[1])
+    njobs = 4 if len(sys.argv) == 1 else int(sys.argv[1])
     pycos.Task(client_proc, njobs)

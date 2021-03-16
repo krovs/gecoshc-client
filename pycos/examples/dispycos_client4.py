@@ -15,9 +15,6 @@
 # Note that the objective is to illustrate features, so implementation is not
 # ideal. Error checking is skipped at a few places for brevity.
 
-import pycos.netpycos as pycos
-from pycos.dispycos import *
-
 # objects of C are sent by a client to remote task
 class C(object):
     def __init__(self, i, data_file, n, client):
@@ -28,14 +25,13 @@ class C(object):
         self.client = client
 
 
-# this generator function is sent to remote server to run
-# tasks there
+# this generator function is sent to remote server to run tasks there
 def rtask_proc(task=None):
     import os
     # receive object from client_proc task
     cobj = yield task.receive()
     if not cobj:
-        raise StopIteration
+        return
     # Input file is already copied at where this rtask is running (by client).
     # For given input file, create an output file with each line in the output
     # file computed as length of corresponding line in input file
@@ -48,7 +44,7 @@ def rtask_proc(task=None):
     yield task.sleep(cobj.n)
     # transfer the result file to client
     status = yield pycos.Pycos().send_file(cobj.client.location, cobj.result_file,
-                                                 overwrite=True, timeout=30)
+                                           overwrite=True, timeout=30)
     if status:
         print('Could not send %s to %s' % (cobj.result_file, cobj.client.location))
         cobj.result_file = None
@@ -57,28 +53,31 @@ def rtask_proc(task=None):
     os.remove(cobj.result_file)
 
 
+# -- code below is executed locally --
+
 # this generator function is used to create local task (at the client) to
 # communicate with a remote task
-def client_proc(job_id, data_file, rtask, task=None):
+def use_rtask(job_id, data_file, rtask, task=None):
     # send input file to rtask.location; this will be saved to dispycos process's
     # working directory
     if (yield pycos.Pycos().send_file(rtask.location, data_file, timeout=10)) < 0:
         print('Could not send input data to %s' % rtask.location)
         # terminate remote task
         rtask.send(None)
-        raise StopIteration(-1)
-    # send info about input
+        return(-1)
+    # send data to process
     obj = C(job_id, data_file, random.uniform(5, 8), task)
     if (yield rtask.deliver(obj)) != 1:
         print('Could not send input to %s' % rtask.location)
-        raise StopIteration(-1)
+        return(-1)
     # rtask sends result to this task as message
     result = yield task.receive()
     if not result.result_file:
         print('Processing %s failed' % obj.i)
-        raise StopIteration(-1)
+        return(-1)
     # rtask saves results file at this client, which is saved in pycos's
-    # dest_path, not current working directory!
+    # dest_path, not current working directory; alternately, pycos.Pycos can be started with
+    # appropriate 'dest_path' parameter
     result_file = os.path.join(pycos.Pycos().dest_path, result.result_file)
     # move file to cwd
     target = os.path.join(os.getcwd(), os.path.basename(result_file))
@@ -86,43 +85,52 @@ def client_proc(job_id, data_file, rtask, task=None):
     print('    job %s output is in %s' % (obj.i, target))
 
 
-def run_jobs_proc(computation, data_files, task=None):
-    # schedule computation with the scheduler; scheduler accepts one computation
-    # at a time, so if scheduler is shared, the computation is queued until it
-    # is done with already scheduled computations
-    if (yield computation.schedule()):
-        raise Exception('Could not schedule computation')
+# local process schedules computation, create remote tasks at dispycos servers and corresponding
+# local tasks (with use_rtask) to communicate with rtasks
+def client_proc(data_files, task=None):
+    # schedule client with the scheduler; scheduler accepts one client
+    # at a time, so if scheduler is shared, the client is queued until it
+    # is done with already scheduled clients
+    if (yield client.schedule()):
+        raise Exception('Could not schedule client')
 
     for i in range(len(data_files)):
-        data_file = data_files[i]
+        data_file = os.path.basename(data_files[i])
         # create remote task
-        rtask = yield computation.run(rtask_proc)
+        rtask = yield client.rtask(rtask_proc)
         if isinstance(rtask, pycos.Task):
-            # create local task to send input file and data to rtask
-            pycos.Task(client_proc, i, data_file, rtask)
+            # start local task to send input file and data to rtask (due to concurrency, many
+            # use_rtask processes can be simultaneously sending data to different servers,
+            # improving efficiency)
+            pycos.Task(use_rtask, i, data_file, rtask)
         else:
-            print('  job %s failed: %s' % (i, rtask))
+            print('  ** job %s failed: %s' % (i, rtask))
 
-    yield computation.close()
+    yield client.close()
 
 
 if __name__ == '__main__':
-    import random, os, sys, glob
+    import sys, random, os, glob
+    import pycos
+    import pycos.netpycos
+    from pycos.dispycos import *
+
     # pycos.logger.setLevel(pycos.Logger.DEBUG)
-    if os.path.dirname(sys.argv[0]):
-        os.chdir(os.path.dirname(sys.argv[0]))
-    data_files = glob.glob('dispycos_client*.py')
+    # PyPI / pip packaging adjusts assertion below for Python 3.7+
+    if sys.version_info.major == 3:
+        assert sys.version_info.minor >= 7, \
+            ('"%s" is not suitable for Python version %s.%s; use file installed by pip instead' %
+             (__file__, sys.version_info.major, sys.version_info.minor))
+
+    data_files = glob.glob(os.path.join(os.path.dirname(sys.argv[0]), 'dispycos_client*.py'))
     if not data_files:
         raise Exception('No data files to process')
     if len(sys.argv) > 1:
         data_files = data_files[:int(sys.argv[1])]
+    print(data_files)
 
-    # if scheduler is not already running (on a node as a program), start it
-    # (private scheduler):
-    Scheduler()
-    # unlike in earlier examples, rtask_proc is not sent with computation (as it
+    # unlike in earlier examples, rtask_proc is not sent with client (as it
     # is not included in 'components'; instead, it is sent each time a job is
-    # submitted, which is a bit inefficient
-    computation = Computation([C])
-
-    pycos.Task(run_jobs_proc, computation, data_files)
+    # submitted, which is a bit inefficient, but useful when using many functions for tasks
+    client = Client([C])
+    pycos.Task(client_proc, data_files)

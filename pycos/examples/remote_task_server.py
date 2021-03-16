@@ -3,14 +3,17 @@
 # same network; see https://pycos.sourceforge.io for details.
 
 import sys, random
+import pycos
 # use netycos to start message passing with remote peers
-import pycos.netpycos as pycos
+import pycos.netpycos
+
 
 # task to process a message from client
 def process(msg, task=None):
     print('processing %s' % (msg))
-    yield task.sleep(random.uniform(0, 1))
+    yield task.sleep(random.uniform(0.5, 2))
     print('  done with %s' % (msg))
+
 
 # task receives messages from client and creates tasks to process each message
 def server_task(task=None):
@@ -20,6 +23,7 @@ def server_task(task=None):
         msg = yield task.receive()
         # create task to process message
         pycos.Task(process, msg)
+
 
 # pycos.logger.setLevel(pycos.Logger.DEBUG)
 # create server task
