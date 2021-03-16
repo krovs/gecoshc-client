@@ -250,13 +250,13 @@ class LoginFrame(Frame):
         
         # Read /etc/gcc.control file
         gcc_control_json = []
-        with file('/etc/gcc.control') as gcc_control:
+        with open('/etc/gcc.control') as gcc_control:
             content = gcc_control.read()
             gcc_control_json = json.loads(content)
 
         # Read /etc/chef/client.pem file
         client_pem = []
-        with file('/etc/chef/client.pem') as client_f:
+        with open('/etc/chef/client.pem') as client_f:
             client_pem = client_f.read()
             
         # Encrypt known message
