@@ -1,18 +1,18 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-from Tkinter import *
+from tkinter import *
 import json
 import subprocess
 import threading
-from tkMessageBox import showerror, showinfo
-import urllib2
-import ConfigParser
+from tkinter.messagebox import showerror, showinfo
+import urllib.request, urllib.error, urllib.parse
+import configparser
 import gettext
 import platform
 import os
 import os.path
-import urllib
+import urllib.request, urllib.parse, urllib.error
 import time
 import logging
 import getpass
@@ -26,7 +26,7 @@ logging.basicConfig(level=logging.DEBUG)
 
 BASE_DIR = '/usr/share/helpchannel'
 
-config = ConfigParser.ConfigParser()
+config = configparser.ConfigParser()
 
 subproc = None
 ssl_context = None
@@ -63,7 +63,7 @@ def build_rest_url(relative_path, params={}):
     url_params = {'connection_code': connection_code}
     url_params.update(params)
 
-    encoded_params = urllib.urlencode(url_params)
+    encoded_params = urllib.parse.urlencode(url_params)
 
     return rest_base + relative_path + '?' + encoded_params
 
@@ -81,9 +81,9 @@ def do_rest_request(url, params={}):
     message = ''
     try:
         if ssl_context is not None:
-            response = urllib2.urlopen(build_rest_url(url, params), context=ssl_context)
+            response = urllib.request.urlopen(build_rest_url(url, params), context=ssl_context)
         else:
-            response = urllib2.urlopen(build_rest_url(url, params))
+            response = urllib.request.urlopen(build_rest_url(url, params))
         
         if response.getcode() == 200:
             ok = True
@@ -95,7 +95,7 @@ def do_rest_request(url, params={}):
             if 'ok' in contents:
                 ok = contents['ok']
     
-    except urllib2.HTTPError as err:
+    except urllib.error.HTTPError as err:
         ok = False
         message = str(err)
 
@@ -446,7 +446,7 @@ if __name__ == "__main__":
         
     try:
         config.read('/etc/helpchannel.conf')
-    except ConfigParser.ParsingError as err:
+    except configparser.ParsingError as err:
         showerror('Error', 'Error parsing /etc/helpchannel.conf: %s' 
             % (str(err)))
         sys.exit(0)
@@ -456,9 +456,9 @@ if __name__ == "__main__":
 
     try:
         lang = gettext.translation('helpchannel', languages=[language])
-        lang.install(unicode=1)    
+        lang.install(str=1)    
     except IOError:
-        print "No translations available"
+        print("No translations available")
         _ = gettext.gettext
 
 

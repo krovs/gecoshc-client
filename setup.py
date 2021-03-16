@@ -33,7 +33,7 @@ try:
     from distutils.core import setup, Command
     from DistUtilsExtra.command import build_i18n, build_extra
 except ImportError:
-    print >> sys.stderr, 'To build HelpChannelClient you need https://launchpad.net/python-distutils-extra'
+    print('To build HelpChannelClient you need https://launchpad.net/python-distutils-extra', file=sys.stderr)
     sys.exit(1)
 assert DistUtilsExtra.auto.__version__ >= '2.18', 'needs DistUtilsExtra.auto >= 2.18'
 
@@ -60,8 +60,8 @@ datafiles.append(('/etc', glob.glob('helpchannel.conf')))
 def update_desktop_file(datadir):
 
     try:
-        fin = file('helpchannel.desktop', 'r')
-        fout = file(fin.name + '.new', 'w')
+        fin = open('helpchannel.desktop', 'r')
+        fout = open(fin.name + '.new', 'w')
 
         for line in fin:
             if 'Icon=' in line:
@@ -71,15 +71,15 @@ def update_desktop_file(datadir):
         fout.close()
         fin.close()
         os.rename(fout.name, fin.name)
-    except (OSError, IOError), e:
+    except (OSError, IOError) as e:
         print ("ERROR: Can't find helpchannel.desktop")
         sys.exit(1)
 
 def update_bin_script(datadir):
 
     try:
-        fin = file('helpchannel', 'r')
-        fout = file(fin.name + '.new', 'w')
+        fin = open('helpchannel', 'r')
+        fout = open(fin.name + '.new', 'w')
 
         for line in fin:
             if 'BASE_DIR =' in line:
@@ -89,7 +89,7 @@ def update_bin_script(datadir):
         fout.close()
         fin.close()
         os.rename(fout.name, fin.name)
-    except (OSError, IOError), e:
+    except (OSError, IOError) as e:
         print ("ERROR: Can't find helpchannel script")
         sys.exit(1)
 
@@ -103,10 +103,10 @@ class InstallAndUpdateDataDirectory(DistUtilsExtra.auto.install_auto):
         update_bin_script(self.prefix + '/share/helpchannel')
         DistUtilsExtra.auto.install_auto.run(self)
         os.system('find %s -type f -exec chmod 644 \\{\\} \\;'%(self.prefix + '/share/helpchannel'))
-        os.system('find %s -type f -exec chmod 644 \\{\\} \\;'%(self.prefix + '/lib/python2.7/site-packages/pycos'))
-        os.system('find %s -type f -exec chmod 644 \\{\\} \\;'%(self.prefix + '/lib/python2.7/site-packages/websocket'))
-        os.system('mv %s %s'%(self.prefix + '/lib/python2.7/site-packages/websocket', self.prefix + '/lib/python2.7/dist-packages/websocket'))
-        os.system('mv %s %s'%(self.prefix + '/lib/python2.7/site-packages/pycos', self.prefix + '/lib/python2.7/dist-packages/pycos'))
+        os.system('find %s -type f -exec chmod 644 \\{\\} \\;'%(self.prefix + '/lib/python3/site-packages/pycos'))
+        os.system('find %s -type f -exec chmod 644 \\{\\} \\;'%(self.prefix + '/lib/python3/site-packages/websocket'))
+        os.system('mv %s %s'%(self.prefix + '/lib/python3/site-packages/websocket', self.prefix + '/lib/python3/dist-packages/websocket'))
+        os.system('mv %s %s'%(self.prefix + '/lib/python3/site-packages/pycos', self.prefix + '/lib/python3/dist-packages/pycos'))
         return True
 
 
