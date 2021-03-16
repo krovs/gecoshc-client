@@ -261,7 +261,7 @@ class LoginFrame(Frame):
             
         # Encrypt known message
         private_key = RSA.importKey(client_pem)
-        encrypted = private_key.decrypt(known_message).encode('hex')   
+        encrypted = private_key.decrypt(known_message.encode()).hex()
         
         global rest_base
         rest_base = gcc_control_json['uri_gcc']
