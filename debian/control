@@ -4,7 +4,7 @@ Priority: optional
 Maintainer: Gecos Team <gecos@guadalinex.org>
 Build-Depends: debhelper, cdbs, python3-all-dev, dh-python, git
 Build-Depends-Indep: gettext, python3-distutils-extra
-Standards-Version: 1.0.0
+Standards-Version: 3.9.5
 Homepage: https://github.com/gecos-team/gecoshc-client
 Vcs-Browser: https://github.com/gecos-team/gecoshc-client
 Vcs-Bzr: https://github.com/gecos-team/gecoshc-client
