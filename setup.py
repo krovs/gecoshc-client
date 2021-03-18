@@ -139,7 +139,7 @@ DistUtilsExtra.auto.setup(
     author='GECOS Team',
     author_email='gecos@guadalinex.org',
     description='Help Channel client',
-    url='https://github.com/Help-Channel-Team/Help-Channel-Client',
+    url='https://github.com/gecos-team/gecoshc-client',
 
     keywords=['python', 'gnome', 'guadalinex', 'gecos', 'help'],
 
