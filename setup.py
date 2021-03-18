@@ -134,12 +134,12 @@ class Clean(Command):
 
 DistUtilsExtra.auto.setup(
     name='helpchannel',
-    version='1.1.1',
+    version='1.2.0',
     license='GPL-2',
     author='GECOS Team',
     author_email='gecos@guadalinex.org',
     description='Help Channel client',
-    url='https://github.com/Help-Channel-Team/Help-Channel-Clientt',
+    url='https://github.com/Help-Channel-Team/Help-Channel-Client',
 
     keywords=['python', 'gnome', 'guadalinex', 'gecos', 'help'],
 
