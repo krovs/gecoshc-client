@@ -35,7 +35,7 @@ try:
 except ImportError:
     print('To build HelpChannelClient you need https://launchpad.net/python-distutils-extra', file=sys.stderr)
     sys.exit(1)
-assert DistUtilsExtra.auto.__version__ >= '2.18', 'needs DistUtilsExtra.auto >= 2.18'
+assert DistUtilsExtra.auto.__version__ >= '2.43', 'needs DistUtilsExtra.auto >= 2.43'
 
 def get_datafiles(datadir):
     source = ''
