@@ -456,7 +456,7 @@ if __name__ == "__main__":
 
     try:
         lang = gettext.translation('helpchannel', languages=[language])
-        lang.install(str=1)    
+        lang.install()    
     except IOError:
         print("No translations available")
         _ = gettext.gettext
