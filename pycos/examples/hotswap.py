@@ -8,6 +8,7 @@
 import sys, random
 import pycos
 
+
 def server_proc(task=None):
     task.set_daemon()
     # indicate that this function can be swapped
@@ -25,6 +26,7 @@ def server_proc(task=None):
             else:
                 print('\n** ignoring hot swap function %s' % (func.__name__))
 
+
 def client_proc(server, i=1, task=None):
     task.set_daemon()
     task.hot_swappable(True)
@@ -35,13 +37,15 @@ def client_proc(server, i=1, task=None):
         i += 1
         yield task.sleep(random.uniform(1, 3))
 
+
 def swap(func_name, file_name, task, *args, **kwargs):
     try:
         exec(open(file_name).read())
         func = locals()[func_name]
         task.hot_swap(func, *args, **kwargs)
-    except:
+    except Exception:
         print('failed to load "%s" from "%s"' % (func_name, file_name))
+
 
 if __name__ == '__main__':
     pycos.logger.setLevel(pycos.Logger.DEBUG)
@@ -53,12 +57,14 @@ if __name__ == '__main__':
         read_input = raw_input
     while True:
         try:
-            cmd = read_input().strip().lower()
+            cmd = read_input('Enter "client" to replace client\n'
+                             '"server" to replace server\n'
+                             '"quit" to exit: ').strip().lower()
             if cmd.startswith('client'):
                 swap('client_proc2', 'hotswap_funcs.py', client, server)
             elif cmd.startswith('server'):
                 swap('server_proc2', 'hotswap_funcs.py', server, random.choice(['log', 'sqrt']))
             elif cmd in ('quit', 'exit'):
                 break
-        except:
+        except Exception:
             break

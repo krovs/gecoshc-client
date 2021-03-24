@@ -5,8 +5,8 @@ This Help Channel client validates the workstation against the GECOS CC and then
 
 # Relathionship with other projects
 This project includes:
-* websocket-client 0.47.0 (https://pypi.python.org/pypi/websocket-client/)
-* pycos 4.6.5 (https://pypi.python.org/pypi/pycos)
+* websocket-client 0.58.0 (https://pypi.python.org/pypi/websocket-client/)
+* pycos 4.11.0 (https://pypi.python.org/pypi/pycos)
 
 This project is part of the GECOS environment.
 

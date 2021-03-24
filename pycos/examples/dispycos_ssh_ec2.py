@@ -1,13 +1,13 @@
 # Run 'dispycosnode.py' program on Amazon EC2 cloud computing and run this
 # program on local computer.
 
-# in this example, ssh is used for port forwarding make sure EC2 instance allows
-# inbound TCP port 51347 (and any additional ports, depending on how many CPUs
-# are used by dispycosnode) assume '54.204.242.185' is external IP address of EC2
-# instance; login to that node with the PEM key: 'ssh -i my-key.pem
-# 4567:127.0.0.1:4567 54.204.242.185' run dispycosnode on EC2 at port (starting
-# with) 51347 with: 'dispycosnode.py -d --ext_ip_addr 54.204.242.185 --tcp_ports
-# 51347'
+# In this example ssh is used for port forwarding.  Make sure EC2 instance
+# allows inbound TCP port 9706 and any additional ports, depending on how many
+# CPUs are used by dispycosnode. Assume '54.204.242.185' is external IP address
+# of EC2 instance. Login to that node with remote port forwarding:
+# 'ssh -R # 9705:127.0.0.1:9705 54.204.242.185' (so port 9705, used by client is
+# forwarded), then run dispycosnode on EC2 server at port (starting with) 9706 with:
+# 'dispycosnode.py -d --ext_ip_addr 54.204.242.185 --tcp_ports 9706'
 
 # Distributed computing example where this client sends computation to remote
 # dispycos process to run as remote tasks. At any time at most one
@@ -19,51 +19,64 @@
 # 'dispycos_client9_node.py') and streaming (see 'dispycos_client6.py') for
 # efficient processing of data and communication.
 
-import pycos.netpycos as pycos
-from pycos.dispycos import *
-
-
 # this generator function is sent to remote dispycos servers to run
 # tasks there
-def compute(n, task=None):
-    import time
+def compute(i, n, task=None):
+    # 'i' is job number and 'n' is seconds to suspend task (to simulate
+    # computation time)
     yield task.sleep(n)
-    raise StopIteration(time.asctime()) # result of 'compute' is current time
+    return((i, n))
 
 
-def client_proc(computation, njobs, task=None):
-    # schedule computation with the scheduler; scheduler accepts one computation
-    # at a time, so if scheduler is shared, the computation is queued until it
-    # is done with already scheduled computations
-    if (yield computation.schedule()):
-        raise Exception('Could not schedule computation')
+# -- code below is executed locally --
+
+def client_proc(njobs, task=None):
+    # schedule client with the scheduler; scheduler accepts one client
+    # at a time, so if scheduler is shared, the client is queued until it
+    # is done with already scheduled clients
+    if (yield client.schedule()):
+        raise Exception('Could not schedule client')
 
     # pair EC2 node with this client with:
-    yield pycos.Pycos().peer(pycos.Location('54.204.242.185', 51347))
-    # if multiple nodes are used, 'broadcast' option can be used to pair with
-    # all nodes with just one statement as:
-    # yield pycos.Pycos().peer(pycos.Location('54.204.242.185', 51347), broadcast=True)
+    yield pycos.Pycos().peer(pycos.Location('54.204.242.185', 9706))
+    # if multiple nodes are used in the network of 54.204.242.185, 'relay' option can be used to
+    # pair with all nodes with just one statement as:
+    # yield pycos.Pycos().peer(pycos.Location('54.204.242.185', 9706), relay=True)
 
-    # execute n jobs (tasks) and get their results. Note that number of
-    # jobs created can be more than number of server processes available; the
-    # scheduler will use as many processes as necessary/available, running one
-    # job at a server process
-    args = [random.uniform(3, 10) for _ in range(njobs)]
-    results = yield computation.run_results(compute, args)
-    for result in results:
-        print('result: %s' % result)
+    # schedule tasks on dispycos servers
+    rtasks = []
+    for i in range(njobs):
+        rtask = yield client.rtask(compute, i, random.uniform(3, 10))
+        if isinstance(rtask, pycos.Task):
+            rtasks.append(rtask)
+        else:
+            print('  ** run failed for %s' % i)
+    # wait for results
+    for rtask in rtasks:
+        result = yield rtask()
+        if isinstance(result, tuple) and len(result) == 2:
+            print('    result from %s: %s' % (rtask.location, str(result)))
+        else:
+            print('  ** rtask %s failed' % rtask)
 
-    yield computation.close()
+    yield client.close()
 
 
 if __name__ == '__main__':
     import sys, random
+    import pycos
+    import pycos.netpycos
+    from pycos.dispycos import *
+
     # pycos.logger.setLevel(pycos.Logger.DEBUG)
-    pycos.Pycos(node='127.0.0.1', tcp_port=4567)
+    # PyPI / pip packaging adjusts assertion below for Python 3.7+
+    if sys.version_info.major == 3:
+        assert sys.version_info.minor >= 7, \
+            ('"%s" is not suitable for Python version %s.%s; use file installed by pip instead' %
+             (__file__, sys.version_info.major, sys.version_info.minor))
+
+    pycos.Pycos(host='127.0.0.1', tcp_port=9705, udp_port=9705)
+    # send 'compute' to remote servers to run tasks when submitted
+    client = Client([compute])
     njobs = 10 if len(sys.argv) == 1 else int(sys.argv[1])
-    # if scheduler is not already running (on a node as a program),
-    # start private scheduler:
-    Scheduler()
-    # send 'compute' generator function
-    computation = Computation([compute])
-    pycos.Task(client_proc, computation, njobs)
+    pycos.Task(client_proc, njobs)

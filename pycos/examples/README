@@ -1,11 +1,16 @@
 Example files in this directory are meant to illustrate features of pycos
 framework. They are not necessarily efficient versions, nor very useful. The
 descriptions below are sorted on the names of files, so some examples at the
-beginning use advanced features, whereas later files may be easier to follow. In
-some cases, 'encode' method is called on strings so same code works with Python
-2 (where 'encode' returns string itself) and Python 3 (where 'encode' returns
-bytes as needed). When programming with Python 2 exclusively, there is no need
-to call 'encode'.
+beginning use advanced features, whereas later files may be easier to follow.
+
+In the examples (as in Pycos implementation), 'raise StopIteration(value)' is used to exit task
+functions (generators). In Python 3.8+, 'StopIteration' has been removed and instead 'return' must
+be used. Pip installer for pycos translates 'raise StopIteration' to 'return' appropriately when
+installing with Python 3.8+. When programming for Python 3.8+ only, use 'return'.
+
+In some cases, 'encode' method is called on strings so same code works with Python 2 (where
+'encode' returns string itself) and Python 3 (where 'encode' returns bytes as needed). When
+programming with Python 2 exclusively, there is no need to call 'encode'.
 
 dispy project (http://dispy.sourceforge.net) uses pycos to implement Python
 framework for distributed and parallel computing.
@@ -32,12 +37,12 @@ framework for distributed and parallel computing.
   tasks. The remote version and local version are similar, except that remote
   versions register/locate tasks.
 
-* dispycos_client1.py illustrates how to use dispycos to distribute computations
+* dispycos_client1.py is a variation of dispycos_client1.py. In this example,
+  http server is used to monitor cluster, nodes, remote tasks.
+
+* dispycos_client2.py illustrates how to use dispycos to distribute computations
   to remote servers to run them as tasks on those servers and get results back
   to client.
-
-* dispycos_client2.py is a variation of dispycos_client1.py. In this example,
-  http server is used to monitor cluster, nodes, remote tasks.
 
 * dispycos_client3.py shows how to exchange messages with objects (instances of
   class) between client and remote tasks.
@@ -51,13 +56,6 @@ framework for distributed and parallel computing.
   output. Asynchronous pipes and message passing are used to send input from
   client to this program executing on remote servers, and get the output back to
   client.
-
-* dispycos_client6.py uses streaming of data to remote tasks for efficient
-  communication. The example also shows how to implement live/real-time
-  analytics and send them to client.
-
-* dispycos_client6_channel.py is same as dispycos_client6.py, except it uses
-  channel to broadcast data to remote tasks.
 
 * dispycos_client7.py is an alternate implementation of dispycos_client1.py; it
   uses messages from dispycos scheduler to schedule remote tasks and get
@@ -85,6 +83,12 @@ framework for distributed and parallel computing.
   may run as many servers as there are processors on that node), which is then
   read in memory on that server for in-memory processing at server level.
 
+* dispycos_client10.py shows how to close and restart servers to start computations with a
+  pristine (global) state.
+
+* dispycos_cloud_computing.py shows configuration for cloud computing using EC2
+  nodes as servers and client on local computer.
+
 * dispycos_httpd1.py shows how to use httpd module to provide HTTP interface to
   monitor dispycos cluster.
 
@@ -92,6 +96,16 @@ framework for distributed and parallel computing.
   process messages from dispycos scheduler (in this case just to print when a
   remote task is finished) while also using httpd module (which chains messages
   from dispycos scheduler to client's 'status_proc').
+
+* dispycos_live_analytics.py shows how to implement live/real-time analytics and send the results
+  back to client. It also uses streaming of data to remote tasks for efficient communication.
+
+* dispycos_mas.py is a simple example of multi-agent system where computations (agents) discover
+  each other, communicate with each other etc..
+
+* dispycos_remote_scheduler.py uses remote (shared) scheduler (instead of
+  starting scheduler itself). It also uses customized (subclassed)
+  DispycosNodeAllocate to allocate CPUs at nodes.
 
 * dispycos_ssh_ec2.py shows how to use ssh port forwarding to work with Amazon
   EC2 cloud computing. In this example client runs locally and dispycosnode runs
@@ -102,24 +116,39 @@ framework for distributed and parallel computing.
   the function being replaced, any unprocessed messages in the task are
   processed with new functionality.
 
+* pico_client_task.py and pico_service_task.py are variation of RPS version above
+  using (remote) tasks and message passing.
+
 * pipe_csum.py uses asynchronous pipes to write data to and read data from a
   system program (that computes checksum of data).
 
 * pipe_grep.py uses chained pipes with asynchronous read and write interface to
   count number of lines matching a pattern.
 
-* rti_monitor_client.py and rti_monitor_server.py illustrate another approach to
-  execute remote tasks: The server registers a function and client requests to
-  execute task with that function. Compare this to dispycos_client.py where the
-  client sends the computation itself to the remote server, so the client can
-  execute arbitrary functions, whereas with RTI only registered functions can be
-  executed by clients.
-
 * remote_channel_client.py and remote_channel_server.py use broadcasting
   channels to exchange messages among a sender and local/remote recipients.
 
 * remote_task_client.py and remote_task_server.py exchange messages with
   one-to-one message passing to exchange messages between two remote tasks.
+
+* rps_log_watch_client.py and rps_log_watch_server.py use RPS to implement
+  log monitoring where each node running log_monitor_server sends filtered log messages
+  to client. This is useful to observe many nodes for potential issues
+  (e.g., authentication failures).
+
+* rps_monitor_client.py and rps_monitor_server.py illustrate another approach to
+  execute remote tasks: The server registers a function and client requests to
+  execute task with that function. Compare this to dispycos_client.py where the
+  client sends the computation itself to the remote server, so the client can
+  execute arbitrary functions, whereas with RPS only registered functions can be
+  executed by clients.
+
+* rps_node_client.py and rps_node_server.py use RPS feature so client can run
+  a script (node_update_script.py in this example) on the server. Authentication is
+  used to prevent unauthorized use of this feature.
+
+* rps_pico_client.py and rps_pico_service.py use RPS feature and message passing
+  to show how a tiny (pico size) service can be implemented.
 
 * sock_client.py and sock_server.py use asynchronous network programmming to
   communicate.

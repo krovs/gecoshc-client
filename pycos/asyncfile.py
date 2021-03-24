@@ -1,5 +1,5 @@
 """
-This file is part of pycos project. See https://pycos.sourceforge.io for details.
+This file is part of pycos; see https://pycos.org for details.
 
 This module provides API for asynchronous file and pipe processing.  They work
 with Windows, Linux, OS X and likely other UNIX variants. Note that regular
@@ -26,9 +26,14 @@ from pycos import _AsyncPoller, Pycos, Task
 __author__ = "Giridhar Pemmasani (pgiri@yahoo.com)"
 __copyright__ = "Copyright (c) 2014 Giridhar Pemmasani"
 __license__ = "Apache 2.0"
-__url__ = "https://pycos.sourceforge.io"
+__url__ = "https://pycos.org"
 
 __all__ = ['AsyncFile', 'AsyncPipe']
+# PyPI / pip packaging adjusts assertion below for Python 3.7+
+assert sys.version_info.major == 3 and sys.version_info.minor >= 7, \
+    ('"%s" is not suitable for Python version %s.%s; use file installed by pip instead' %
+     (__file__, sys.version_info.major, sys.version_info.minor))
+
 
 if platform.system() == 'Windows':
     __all__ += ['pipe', 'Popen']
@@ -77,7 +82,7 @@ if platform.system() == 'Windows':
                 pycos.logger.warning('connect failed: %s' % rc)
                 raise Exception(rc)
             return (rh, wh)
-        except:
+        except Exception:
             if rh is not None:
                 win32file.CloseHandle(rh)
             if wh is not None:
@@ -103,13 +108,13 @@ if platform.system() == 'Windows':
 
             if stdout == subprocess.PIPE:
                 stdout_rh, stdout_wh = pipe()
-                stdout_wfd = msvcrt.open_osfhandle(stdout_wh, 0)
+                stdout_wfd = msvcrt.open_osfhandle(stdout_wh.Detach(), 0)
             else:
                 stdout_wfd = stdout
 
             if stderr == subprocess.PIPE:
                 stderr_rh, stderr_wh = pipe()
-                stderr_wfd = msvcrt.open_osfhandle(stderr_wh, 0)
+                stderr_wfd = msvcrt.open_osfhandle(stderr_wh.Detach(), 0)
             elif stderr == subprocess.STDOUT:
                 stderr_wfd = stdout_wfd
             else:
@@ -118,7 +123,7 @@ if platform.system() == 'Windows':
             try:
                 super(Popen, self).__init__(args, stdin=stdin_rfd, stdout=stdout_wfd,
                                             stderr=stderr_wfd, **kwargs)
-            except:
+            except Exception:
                 for handle in (stdin_rh, stdin_wh, stdout_rh, stdout_wh, stderr_rh, stderr_wh):
                     if handle is not None:
                         win32file.CloseHandle(handle)
@@ -215,7 +220,7 @@ if platform.system() == 'Windows':
                 try:
                     self._handle = win32file.CreateFile(path_handle, access, share, None, create,
                                                         flags, None)
-                except:
+                except Exception:
                     self._overlap = None
                     raise
                 if mode.startswith('r'):
@@ -224,24 +229,26 @@ if platform.system() == 'Windows':
                     flags = os.O_APPEND
                 else:
                     flags = 0
-                self._fileno = msvcrt.open_osfhandle(self._handle, flags)
+                self._fileno = msvcrt.open_osfhandle(self._handle.Detach(), flags)
             else:
                 self._handle = path_handle
                 # pipe mode should be either 'r' or 'w'
                 flags = os.O_RDONLY if mode.startswith('r') else 0
-                self._fileno = msvcrt.open_osfhandle(self._handle, flags)
+                self._fileno = msvcrt.open_osfhandle(self._handle.Detach(), flags)
 
             self._buflist = []
             self._read_result = None
             self._write_result = None
             self._timeout = None
             self._timeout_id = None
+            self._handle = msvcrt.get_osfhandle(self._fileno)
             self._pycos = Pycos.scheduler()
             if self._pycos:
                 self._notifier = self._pycos._notifier
                 self._notifier.register(self._handle)
             else:
                 self._notifier = None
+            self._event = None
 
         def read(self, size=0, full=False, timeout=None):
             """Read at most 'size' bytes from file; if 'size' <= 0,
@@ -269,7 +276,7 @@ if platform.system() == 'Windows':
                     if rc != winerror.ERROR_OPERATION_ABORTED:
                         if (self._buflist or rc == winerror.ERROR_HANDLE_EOF or
                            rc == winerror.ERROR_BROKEN_PIPE):
-                            buf, self._buflist = ''.join(self._buflist), []
+                            buf, self._buflist = b''.join(self._buflist), []
                             self._read_task._proceed_(buf)
                             return
                         self._read_task.throw(IOError(rc, 'ReadFile', str(rc)))
@@ -291,7 +298,7 @@ if platform.system() == 'Windows':
                     except pywintypes.error as exc:
                         rc = exc.winerror
                     if rc and rc != winerror.ERROR_IO_PENDING:
-                        buf, self._buflist = ''.join(self._buflist), []
+                        buf, self._buflist = b''.join(self._buflist), []
                         self._overlap.object = self._read_result = None
                         if self._timeout:
                             self._notifier._del_timeout(self)
@@ -300,7 +307,7 @@ if platform.system() == 'Windows':
                     return
 
                 if self._buflist:
-                    buf, self._buflist = ''.join(self._buflist), []
+                    buf, self._buflist = b''.join(self._buflist), []
                 if self._timeout:
                     self._notifier._del_timeout(self)
                 self._overlap.object = self._read_result = None
@@ -316,7 +323,7 @@ if platform.system() == 'Windows':
                 full = True
             else:
                 if self._buflist:
-                    buf, self._buflist = ''.join(self._buflist), []
+                    buf, self._buflist = b''.join(self._buflist), []
                     if len(buf) > size:
                         buf, self._buflist = buf[:size], [buf[size:]]
                     if (not full) or (len(buf) == size):
@@ -332,7 +339,7 @@ if platform.system() == 'Windows':
                 rc, _ = win32file.ReadFile(self._handle, self._read_result, self._overlap)
             except pywintypes.error as exc:
                 if exc.winerror == winerror.ERROR_BROKEN_PIPE:
-                    buf, self._buflist = ''.join(self._buflist), []
+                    buf, self._buflist = b''.join(self._buflist), []
                     self._read_task._proceed_(buf)
                     self._read_result = self._read_task = self._overlap.object = None
                     return
@@ -370,6 +377,7 @@ if platform.system() == 'Windows':
                             self._write_task._proceed_(written)
                         else:
                             self._write_task.throw(IOError(rc, 'WriteFile', str(rc)))
+                    self._write_result.release()
                     self._overlap.object = self._write_task = self._write_result = None
                     return
 
@@ -377,6 +385,7 @@ if platform.system() == 'Windows':
                 self._overlap.Offset += n
                 self._write_result = self._write_result[n:]
                 if not full or len(self._write_result) == 0:
+                    self._write_result.release()
                     self._overlap.object = self._write_result = None
                     if self._timeout:
                         self._notifier._del_timeout(self)
@@ -390,6 +399,7 @@ if platform.system() == 'Windows':
                 except pywintypes.error as exc:
                     rc = exc.winerror
                 if rc and rc != winerror.ERROR_IO_PENDING:
+                    self._write_result.release()
                     self._overlap.object = self._write_result = None
                     if self._timeout:
                         self._notifier._del_timeout(self)
@@ -400,24 +410,26 @@ if platform.system() == 'Windows':
                     self._write_task = None
                 return
 
-            self._write_result = buffer(buf)
-            self._overlap.object = partial_func(_write, 0)
             if not self._pycos:
                 self._pycos = Pycos.scheduler()
                 self._notifier = self._pycos._notifier
                 self._notifier.register(self._handle)
+            self._write_result = memoryview(buf)
+            self._overlap.object = partial_func(_write, 0)
             self._write_task = Pycos.cur_task(self._pycos)
             self._write_task._await_()
             try:
                 rc, _ = win32file.WriteFile(self._handle, self._write_result, self._overlap)
             except pywintypes.error as exc:
                 if exc.winerror == winerror.ERROR_BROKEN_PIPE:
+                    self._write_result.release()
                     self._write_task._proceed_(0)
                     self._write_result = self._write_task = self._overlap.object = None
                     return
                 else:
                     rc = exc.winerror
             if rc and rc != winerror.ERROR_IO_PENDING:
+                self._write_result.release()
                 self._overlap.object = self._write_result = self._write_task = None
                 self._write_task._proceed_(None)
                 raise IOError(rc, 'WriteFile', str(rc))
@@ -459,7 +471,7 @@ if platform.system() == 'Windows':
             if self._handle:
                 try:
                     flags = win32pipe.GetNamedPipeInfo(self._handle)[0]
-                except:
+                except Exception:
                     flags = 0
 
                 if flags & win32con.PIPE_SERVER_END:
@@ -487,7 +499,7 @@ if platform.system() == 'Windows':
             """
             if self._read_task:
                 if self._buflist:
-                    buf, self._buflist = ''.join(self._buflist), []
+                    buf, self._buflist = b''.join(self._buflist), []
                     self._read_task._proceed_(buf)
                     self._read_task = None
                 else:
@@ -530,6 +542,7 @@ else:
             self._write_task = None
             self._write_fn = None
             self._buflist = []
+            self._event = None
             flags = fcntl.fcntl(self._fileno, fcntl.F_GETFL)
             fcntl.fcntl(self._fileno, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
@@ -563,7 +576,7 @@ else:
                         return
                     else:
                         raise
-                except:
+                except Exception:
                     self._notifier.clear(self, _AsyncPoller._Read)
                     self._read_task.throw(*sys.exc_info())
                     self._read_task = self._read_fn = None
@@ -581,7 +594,7 @@ else:
                         return
 
                 if self._buflist:
-                    buf, self._buflist = ''.join(self._buflist), []
+                    buf, self._buflist = b''.join(self._buflist), []
                 self._notifier.clear(self, _AsyncPoller._Read)
                 self._read_task._proceed_(buf)
                 self._read_task = self._read_fn = None
@@ -595,7 +608,7 @@ else:
                 size = 0
                 full = True
             elif self._buflist:
-                buf, self._buflist = ''.join(self._buflist), []
+                buf, self._buflist = b''.join(self._buflist), []
                 if len(buf) > size:
                     buf, self._buflist = buf[:size], [buf[size:]]
                 if (not full) or (len(buf) == size):
@@ -632,12 +645,16 @@ else:
                         n = 0
                     else:
                         self._notifier.clear(self, _AsyncPoller._Write)
+                        if full:
+                            view.release()
                         self._write_task.throw(*sys.exc_info())
                         self._write_task = self._write_fn = None
                         return
                 written += n
                 if n == len(view) or not full:
                     self._notifier.clear(self, _AsyncPoller._Write)
+                    if full:
+                        view.release()
                     self._write_task._proceed_(written)
                     self._write_task = self._write_fn = None
                 else:
@@ -650,7 +667,7 @@ else:
                 if hasattr(self._fd, '_fileno'):
                     self._notifier.unregister(self._fd)
             if full:
-                view = buffer(buf)
+                view = memoryview(buf)
             else:
                 view = buf
             self._timeout = timeout
@@ -682,7 +699,7 @@ else:
             """
             if self._read_task:
                 if self._read_fn and self._buflist:
-                    buf, self._buflist = ''.join(self._buflist), []
+                    buf, self._buflist = b''.join(self._buflist), []
                     self._notifier.clear(self, _AsyncPoller._Read)
                     self._read_task._proceed_(buf)
                 else:
@@ -692,6 +709,8 @@ else:
                 written = 0
                 if self._write_fn:
                     written = self._write_fn.args[2]
+                    if isinstance(self._write_fn.args[1], memoryview):
+                        self._write_fn.args[1].release()
                 self._notifier.clear(self, _AsyncPoller._Write)
                 self._write_task._proceed_(written)
                 self._write_task = self._write_fn = None
@@ -711,33 +730,33 @@ class AsyncFile(_AsyncFile):
         if not size or size < 0:
             size = 0
         if self._buflist:
-            buf, self._buflist = ''.join(self._buflist), []
+            buf, self._buflist = b''.join(self._buflist), []
         else:
             buf = yield self.read(size=sizehint, timeout=timeout)
             if not buf:
-                raise StopIteration(buf)
+                return(buf)
 
         buflist = []
         while 1:
             if size > 0:
-                pos = buf.find('\n', 0, size)
+                pos = buf.find(b'\n', 0, size)
                 size -= len(buf)
                 if size <= 0 and pos < 0:
                     pos = size + len(buf) - 1
             else:
-                pos = buf.find('\n')
+                pos = buf.find(b'\n')
             if pos >= 0:
                 if buflist:
-                    buf = ''.join(buflist) + buf
+                    buf = b''.join(buflist) + buf
                     pos += sum(len(b) for b in buflist)
                 if len(buf) > pos:
                     buf, self._buflist = buf[:pos+1], [buf[pos+1:]]
-                raise StopIteration(buf)
+                return(buf)
             buflist.append(buf)
             buf = yield self.read(size=sizehint, timeout=timeout)
             if not buf:
-                buf = ''.join(buflist)
-                raise StopIteration(buf)
+                buf = b''.join(buflist)
+                return(buf)
 
     def __enter__(self):
         return self
@@ -804,31 +823,36 @@ class AsyncPipe(object):
         """Write data in buf to stdin of pipe. See 'write' method of
         AsyncFile for details.
         """
-        yield self.stdin.write(buf, full=full, timeout=timeout)
+        result = yield self.stdin.write(buf, full=full, timeout=timeout)
+        return(result)
 
     def read(self, size=0, timeout=None):
         """Read data from stdout of pipe. See 'read' method of
         AsyncFile for details.
         """
-        yield self.stdout.read(size=size, timeout=timeout)
+        result = yield self.stdout.read(size=size, timeout=timeout)
+        return(result)
 
     def readline(self, size=0, sizehint=100, timeout=None):
         """Read a line from stdout of pipe. See 'readline' method of
         AsyncFile for details.
         """
-        yield self.stdout.readline(size=size, sizehint=sizehint, timeout=timeout)
+        result = yield self.stdout.readline(size=size, sizehint=sizehint, timeout=timeout)
+        return(result)
 
     def read_stderr(self, size=0, timeout=None):
         """Read data from stderr of pipe. See 'read' method of
         AsyncFile for details.
         """
-        yield self.stderr.read(size=size, timeout=timeout)
+        result = yield self.stderr.read(size=size, timeout=timeout)
+        return(result)
 
     def readline_stderr(self, size=0, sizehint=100, timeout=None):
         """Read a line from stderr of pipe. See 'readline' method of
         AsyncFile for details.
         """
-        yield self.stderr.readline(size=size, sizehint=sizehint, timeout=timeout)
+        result = yield self.stderr.readline(size=size, sizehint=sizehint, timeout=timeout)
+        return(result)
 
     def communicate(self, input=None):
         """Similar to Popen's communicate. Must be used with 'yield' as
@@ -839,7 +863,7 @@ class AsyncPipe(object):
         """
         def write_proc(fd, input, task=None):
             size = 16384
-            if isinstance(input, str):
+            if isinstance(input, str) or isinstance(input, bytes):
                 n = yield fd.write(input, full=True)
                 if n != len(input):
                     raise IOError('write failed')
@@ -854,6 +878,8 @@ class AsyncPipe(object):
                     data = yield read_func(size)
                     if not data:
                         break
+                    if isinstance(data, str):
+                        data = data.encode()
                     n = yield fd.write(data, full=True)
                     if n != len(data):
                         raise IOError('write failed')
@@ -869,8 +895,8 @@ class AsyncPipe(object):
                     break
                 buflist.append(buf)
             fd.close()
-            data = ''.join(buflist)
-            raise StopIteration(data)
+            data = b''.join(buflist)
+            return(data)
 
         if self.stdout:
             stdout_task = Task(read_proc, self.stdout)
@@ -880,8 +906,11 @@ class AsyncPipe(object):
             stdin_task = Task(write_proc, self.stdin, input)
             yield stdin_task.finish()
 
-        raise StopIteration((yield stdout_task.finish()) if self.stdout else None,
-                            (yield stderr_task.finish()) if self.stderr else None)
+        out, err = ((yield stdout_task.finish()) if self.stdout else None,
+                    (yield stderr_task.finish()) if self.stderr else None)
+        # TODO: Is it possible for 'wait' to block even after I/O is finished?
+        self.wait()
+        return((out, err))
 
     def poll(self):
         """Similar to 'poll' of Popen.

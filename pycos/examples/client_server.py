@@ -4,8 +4,9 @@
 # (asynchronous concurrent programming);
 # see https://pycos.sourceforge.io/pycos.html for details.
 
-import sys, random
+import random
 import pycos
+
 
 def server_proc(task=None):
     task.set_daemon()
@@ -13,15 +14,19 @@ def server_proc(task=None):
         msg = yield task.receive()
         print('Received %s' % (msg))
 
-msg_id = 0
 
 def client_proc(server, n, task=None):
     global msg_id
     for i in range(3):
         yield task.suspend(random.uniform(0.5, 3))
+        # although multiple clients execute this method, locking is not
+        # necessary, as a task not preempted (unlike Python threads) and runs
+        # till 'yield'
         msg_id += 1
-        server.send('%d: %d / %d' % (msg_id, n, i))
+        server.send('msg_id %d: client %d, msg %d' % (msg_id, n, i))
 
+
+msg_id = 0
 # create server
 server = pycos.Task(server_proc)
 # create 10 clients

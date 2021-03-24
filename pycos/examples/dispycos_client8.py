@@ -4,25 +4,21 @@
 # This example uses status messages and message passing to run 'setup' task at
 # remote process to prepare it for processing jobs.
 
-import pycos.netpycos as pycos
-from pycos.dispycos import *
-
 # Unlike in earlier versions of pycos, computations can now take time - even if
 # computations don't "yield" to scheduler, pycos can still send/receive
 # messages, respond to timer events in scheduler etc. In this case, computation
 # is simulated with 'time.sleep' which blocks user pycos thread, but another
 # (reactive) asytask thread processes network traffic, run scheduler tasks.
-
 def compute_task(task=None):
     import time
 
-    client = yield task.receive() # first message is client task
+    reply_task = yield task.receive()  # first message is reply task (send_requests) at client
 
     result = 0
     while True:
         n = yield task.receive()
         if n is None:  # end of requests
-            client.send(result)
+            reply_task.send(result)
             break
         # long-running computation (without 'yield') is simulated with
         # 'time.sleep'; during this time client may send messages to this task
@@ -31,13 +27,16 @@ def compute_task(task=None):
         time.sleep(n)
         result += n
 
+
+# -- code below is executed locally --
+
 # client (local) task runs computations
-def client_proc(computation, njobs, task=None):
-    # schedule computation with the scheduler; scheduler accepts one computation
-    # at a time, so if scheduler is shared, the computation is queued until it
-    # is done with already scheduled computations
-    if (yield computation.schedule()):
-        raise Exception('Could not schedule computation')
+def client_proc(njobs, task=None):
+    # schedule client with the scheduler; scheduler accepts one client
+    # at a time, so if scheduler is shared, the client is queued until it
+    # is done with already scheduled clients
+    if (yield client.schedule()):
+        raise Exception('Could not schedule client')
 
     # send 5 requests to remote process (compute_task)
     def send_requests(rtask, task=None):
@@ -45,7 +44,7 @@ def client_proc(computation, njobs, task=None):
         rtask.send(task)
         for i in range(5):
             # even if recipient doesn't use "yield" (such as executing long-run
-            # computation, or thread-blocking function such as 'time.sleep' as
+            # client, or thread-blocking function such as 'time.sleep' as
             # in this case), the message is accepted by another scheduler
             # (netpycos.Pycos) at the receiver and put in recipient's message
             # queue
@@ -54,25 +53,27 @@ def client_proc(computation, njobs, task=None):
             yield task.sleep(random.uniform(2, 5))
         # end of input is indicated with None
         rtask.send(None)
-        result = yield task.receive() # get result
+        result = yield task.receive()  # get result
         print('    %s computed result: %.4f' % (rtask.location, result))
 
     for i in range(njobs):
-        rtask = yield computation.run(compute_task)
+        rtask = yield client.rtask(compute_task)
         if isinstance(rtask, pycos.Task):
             print('  job %d processed by %s' % (i, rtask.location))
             pycos.Task(send_requests, rtask)
+        else:
+            print('  ** job %s failed: %s' % (i, rtask))
 
-    yield computation.close()
+    yield client.close()
 
 
 if __name__ == '__main__':
     import random, sys
-    # pycos.logger.setLevel(pycos.Logger.DEBUG)
-    # if scheduler is not already running (on a node as a program), start
-    # private scheduler:
-    Scheduler()
-    # package computation fragments
-    computation = Computation([compute_task])
+    import pycos
+    import pycos.netpycos
+    from pycos.dispycos import *
+
+    # package client components
+    client = Client([compute_task])
     # run n jobs
-    pycos.Task(client_proc, computation, 10 if len(sys.argv) < 2 else int(sys.argv[1]))
+    pycos.Task(client_proc, 10 if len(sys.argv) < 2 else int(sys.argv[1]))

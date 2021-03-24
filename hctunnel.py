@@ -2,7 +2,7 @@
 
 import pycos, socket, sys, ssl, os, signal, time
 import websocket
-import ConfigParser
+import configparser
 
 # Function to get dictionary with the values of one section of the configuration file
 def config_section_map(section):
@@ -25,7 +25,7 @@ def ws_send(conn,ws, task=None):
         try:
             line = yield thread_pool.async_task(ws.recv)
         except Exception as ex:
-            print 'Error in server tunnel: %s'%(str(ex))
+            print('Error in server tunnel: %s'%(str(ex)))
             break
         if not line:
             break
@@ -41,7 +41,7 @@ def client_send(conn,ws, task=None):
         try:
             line = yield conn.recv(1024)	
         except Exception as ex:
-            print 'Error in client tunnel: %s'%(str(ex))
+            print('Error in client tunnel: %s'%(str(ex)))
             break
         if not line:
             break
@@ -82,7 +82,7 @@ def hcwst(host, port,repeater_ws,proxy_host,proxy_port,proxy_username,proxy_pass
 
 if __name__ == '__main__':
 
-    config = ConfigParser.ConfigParser()
+    config = configparser.ConfigParser()
     config.read("/etc/helpchannel.conf")
 
     server_config = config_section_map("ServerConfig")

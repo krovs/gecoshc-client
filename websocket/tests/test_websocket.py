@@ -1,5 +1,29 @@
 # -*- coding: utf-8 -*-
 #
+"""
+
+"""
+
+"""
+websocket - WebSocket client library for Python
+
+Copyright (C) 2010 Hiroki Ohtani(liris)
+
+    This library is free software; you can redistribute it and/or
+    modify it under the terms of the GNU Lesser General Public
+    License as published by the Free Software Foundation; either
+    version 2.1 of the License, or (at your option) any later version.
+
+    This library is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+    Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public
+    License along with this library; if not, write to the Free Software
+    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+
+"""
 
 import sys
 sys.path[0:0] = [""]
@@ -40,7 +64,7 @@ TEST_WITH_INTERNET = os.environ.get('TEST_WITH_INTERNET', '0') == '1'
 
 # Skip Secure WebSocket test.
 TEST_SECURE_WS = True
-TRACEABLE = False
+TRACEABLE = True
 
 
 def create_mask_key(_):
@@ -54,6 +78,9 @@ class SockMock(object):
 
     def add_packet(self, data):
         self.data.append(data)
+
+    def gettimeout(self):
+        return None
 
     def recv(self, bufsize):
         if self.data:
@@ -219,6 +246,8 @@ class WebSocketTest(unittest.TestCase):
         header["sec-websocket-protocol"] = "sUb1"
         self.assertEqual(_validate_header(header, key, ["Sub1", "suB2"]), (True, "sub1"))
 
+        header = required_header.copy()
+        self.assertEqual(_validate_header(header, key, ["Sub1", "suB2"]), (False, None))
 
     def testReadHeader(self):
         status, header, status_message = read_headers(HeaderSockMock("data/header01.txt"))
@@ -260,14 +289,14 @@ class WebSocketTest(unittest.TestCase):
     @unittest.skipUnless(TEST_WITH_INTERNET, "Internet-requiring tests are disabled")
     def testIter(self):
         count = 2
-        for _ in ws.create_connection('ws://stream.meetup.com/2/rsvps'):
+        for _ in ws.create_connection('wss://stream.meetup.com/2/rsvps'):
             count -= 1
             if count == 0:
                 break
 
     @unittest.skipUnless(TEST_WITH_INTERNET, "Internet-requiring tests are disabled")
     def testNext(self):
-        sock = ws.create_connection('ws://stream.meetup.com/2/rsvps')
+        sock = ws.create_connection('wss://stream.meetup.com/2/rsvps')
         self.assertEqual(str, type(next(sock)))
 
     def testInternalRecvStrict(self):
@@ -444,7 +473,7 @@ class WebSocketTest(unittest.TestCase):
         #    pass
 
     @unittest.skipUnless(TEST_WITH_INTERNET, "Internet-requiring tests are disabled")
-    def testWebSocketWihtCustomHeader(self):
+    def testWebSocketWithCustomHeader(self):
         s = ws.create_connection("ws://echo.websocket.org/",
                                  headers={"User-Agent": "PythonWebsocketClient"})
         self.assertNotEqual(s, None)
@@ -509,15 +538,15 @@ class WebSocketAppTest(unittest.TestCase):
         app = ws.WebSocketApp('ws://echo.websocket.org/', on_open=on_open, on_close=on_close)
         app.run_forever()
 
-        # if numpu is installed, this assertion fail
+        # if numpy is installed, this assertion fail
         # self.assertFalse(isinstance(WebSocketAppTest.keep_running_open,
         #                             WebSocketAppTest.NotSetYet))
 
-        self.assertFalse(isinstance(WebSocketAppTest.keep_running_close,
-                                    WebSocketAppTest.NotSetYet))
+        # self.assertFalse(isinstance(WebSocketAppTest.keep_running_close,
+        #                             WebSocketAppTest.NotSetYet))
 
         # self.assertEqual(True, WebSocketAppTest.keep_running_open)
-        self.assertEqual(False, WebSocketAppTest.keep_running_close)
+        # self.assertEqual(False, WebSocketAppTest.keep_running_close)
 
     @unittest.skipUnless(TEST_WITH_INTERNET, "Internet-requiring tests are disabled")
     def testSockMaskKey(self):
@@ -551,6 +580,7 @@ class SockOptTest(unittest.TestCase):
         self.assertNotEqual(s.sock.getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY), 0)
         s.close()
 
+
 class UtilsTest(unittest.TestCase):
     def testUtf8Validator(self):
         state = validate_utf8(six.b('\xf0\x90\x80\x80'))
@@ -559,6 +589,7 @@ class UtilsTest(unittest.TestCase):
         self.assertEqual(state, False)
         state = validate_utf8(six.b(''))
         self.assertEqual(state, True)
+
 
 class ProxyInfoTest(unittest.TestCase):
     def setUp(self):
@@ -580,7 +611,6 @@ class ProxyInfoTest(unittest.TestCase):
         elif "https_proxy" in os.environ:
             del os.environ["https_proxy"]
 
-
     def testProxyFromArgs(self):
         self.assertEqual(get_proxy_info("echo.websocket.org", False, proxy_host="localhost"), ("localhost", 0, None))
         self.assertEqual(get_proxy_info("echo.websocket.org", False, proxy_host="localhost", proxy_port=3128), ("localhost", 3128, None))
@@ -600,7 +630,6 @@ class ProxyInfoTest(unittest.TestCase):
             ("localhost", 3128, ("a", "b")))
         self.assertEqual(get_proxy_info("echo.websocket.org", True, proxy_host="localhost", proxy_port=3128, no_proxy=["echo.websocket.org"], proxy_auth=("a", "b")),
             (None, 0, None))
-
 
     def testProxyFromEnv(self):
         os.environ["http_proxy"] = "http://localhost/"

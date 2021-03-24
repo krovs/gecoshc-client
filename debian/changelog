@@ -1,3 +1,9 @@
+gecosws-hc-client (1.2.0) 1-0-staging; urgency=low
+
+  * Migate to Python3
+
+ -- Gecos Team <gecos@guadalinex.org> Mon, 16 Mar 2021 12:00:00 +0100
+
 gecosws-hc-client (1.1.1) 1-0-staging; urgency=low
 
   * Fix error in parenthesis
