@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 from tkinter import *
@@ -142,6 +142,15 @@ end_loop = False
 language = 'es'
 
 
+def print_output(out):
+    line = out.readline().decode('utf-8')
+    print(line)
+    while len(line)>0:
+        time.sleep(0.1)
+        line = out.readline().decode('utf-8')
+        print(line)
+
+
 class HelpChannel(Tk):
     """
     Main application class. It's responsible for showing user dialogs.
@@ -191,7 +200,24 @@ class HelpChannel(Tk):
         tunnelscript = config_section_map("TunnelConfig")['command_full_path']  
         command = [tunnelscript]
         logging.info('Starting tunnel...')
-        subproc_tunnel = subprocess.Popen(command, bufsize=0, shell=False)
+        subproc_tunnel = subprocess.Popen(command, stdout=subprocess.PIPE,
+            shell=False)
+        # Wait for "Tunnel connected to" message
+        line = subproc_tunnel.stdout.readline().decode('utf-8')
+        if len(line)>0:
+            print(line)
+        while not line.startswith('Tunnel connected to'):
+            time.sleep(1)
+            line = subproc_tunnel.stdout.readline().decode('utf-8')
+            if len(line)>0:
+                print(line)
+            else:
+                break
+        
+
+        subproc_tunnel_out = threading.Thread(target=print_output,
+            args=(subproc_tunnel.stdout,))
+        subproc_tunnel_out.start()
 
         command_full_path = config_section_map("x11vncConfig")['command_full_path']
         repeater = config_section_map("x11vncConfig")['remote_repeater']
@@ -205,7 +231,8 @@ class HelpChannel(Tk):
 
         global subproc_vnc
         logging.info('Starting x11vnc...')
-        subproc_vnc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+        subproc_vnc = subprocess.Popen(command,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
             
         logging.info('Accepting the connection...')
         # Rest request to accept connection

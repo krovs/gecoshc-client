@@ -53,7 +53,7 @@ def hcwst(host, port,repeater_ws,proxy_host,proxy_port,proxy_username,proxy_pass
     sock.bind((host, int(port)))
     sock.listen(1)
 
-    print('Tunnel listening at %s' % str(sock.getsockname()))
+    print('Tunnel listening at %s' % str(sock.getsockname()), flush=True)
     if ssl_verify:
         ssl_defaults = ssl.get_default_verify_paths()
         sslopt_ca_certs = {'ca_cert_path': ssl_defaults.capath}
@@ -66,7 +66,7 @@ def hcwst(host, port,repeater_ws,proxy_host,proxy_port,proxy_username,proxy_pass
     else:
         ws.connect(repeater_ws,http_proxy_host=proxy_host,http_proxy_port=proxy_port,http_proxy_auth=proxy_auth, subprotocols=["binary"],sockopt=(socket.IPPROTO_TCP, socket.TCP_NODELAY))	
   
-    print('Tunnel connected to %s'% repeater_ws )
+    print('Tunnel connected to %s'% repeater_ws, flush=True)
 
     conn, _ = sock.accept()
     client_thread = threading.Thread(target=client_send, args=(conn, ws, ))
