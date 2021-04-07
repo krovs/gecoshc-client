@@ -1,3 +1,10 @@
+gecosws-hc-client (1.2.1) 1-0-staging; urgency=low
+
+  * Remove pycos library
+  * Wait until hctunnel is connected before starting x11vnc
+
+ -- Gecos Team <gecos@guadalinex.org> Wed, 7 Apr 2021 12:00:00 +0100
+
 gecosws-hc-client (1.2.0) 1-0-staging; urgency=low
 
   * Migate to Python3
