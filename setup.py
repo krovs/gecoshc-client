@@ -103,10 +103,8 @@ class InstallAndUpdateDataDirectory(DistUtilsExtra.auto.install_auto):
         update_bin_script(self.prefix + '/share/helpchannel')
         DistUtilsExtra.auto.install_auto.run(self)
         os.system('find %s -type f -exec chmod 644 \\{\\} \\;'%(self.prefix + '/share/helpchannel'))
-        os.system('find %s -type f -exec chmod 644 \\{\\} \\;'%(self.prefix + '/lib/python3/site-packages/pycos'))
         os.system('find %s -type f -exec chmod 644 \\{\\} \\;'%(self.prefix + '/lib/python3/site-packages/websocket'))
         os.system('mv %s %s'%(self.prefix + '/lib/python3/site-packages/websocket', self.prefix + '/lib/python3/dist-packages/websocket'))
-        os.system('mv %s %s'%(self.prefix + '/lib/python3/site-packages/pycos', self.prefix + '/lib/python3/dist-packages/pycos'))
         return True
 
 
@@ -144,7 +142,6 @@ DistUtilsExtra.auto.setup(
     keywords=['python', 'gnome', 'guadalinex', 'gecos', 'help'],
 
     packages=[
-        'pycos',
         'websocket',
     ],
 
