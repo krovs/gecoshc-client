@@ -1,2 +1,4 @@
 *.pyc
-
+AppDir
+appimage-builder-cache
+.vscode
