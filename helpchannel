@@ -16,11 +16,12 @@ import urllib.request, urllib.parse, urllib.error
 import time
 import logging
 import getpass
-from Crypto.PublicKey import RSA
+#from Crypto.PublicKey import RSA
 import requests
 import ssl
 import logging
 import signal
+import sys
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -197,7 +198,7 @@ class HelpChannel(Tk):
         logging.info('Opening connection')
         status = '01-LOGGED'
         
-        tunnelscript = config_section_map("TunnelConfig")['command_full_path']  
+        tunnelscript = os.environ['APPDIR'] + config_section_map("TunnelConfig")['command_full_path']  
         command = [tunnelscript]
         logging.info('Starting tunnel...')
         subproc_tunnel = subprocess.Popen(command, stdout=subprocess.PIPE,
@@ -219,7 +220,7 @@ class HelpChannel(Tk):
             args=(subproc_tunnel.stdout,))
         subproc_tunnel_out.start()
 
-        command_full_path = config_section_map("x11vncConfig")['command_full_path']
+        command_full_path = os.environ['APPDIR'] + config_section_map("x11vncConfig")['command_full_path']
         repeater = config_section_map("x11vncConfig")['remote_repeater']
         port = config_section_map("x11vncConfig")['remote_port']
 
@@ -283,12 +284,12 @@ class LoginFrame(Frame):
 
         # Read /etc/chef/client.pem file
         client_pem = []
-        with open('/etc/chef/client.pem') as client_f:
-            client_pem = client_f.read()
+        #with open('/etc/chef/client.pem') as client_f:
+            #client_pem = client_f.read()
             
         # Encrypt known message
-        private_key = RSA.importKey(client_pem)
-        encrypted = private_key.decrypt(known_message.encode()).hex()
+        #private_key = RSA.importKey(client_pem)
+        #encrypted = private_key.decrypt(known_message.encode()).hex()
         
         global rest_base
         rest_base = gcc_control_json['uri_gcc']
@@ -314,7 +315,7 @@ class LoginFrame(Frame):
             # Login in the GECOS Control Center
             res = requests.post(url+'/help-channel-client/login', 
                 data={'node_id':node_id, 'username':username, 
-                    'gcc_username': gcc_username, 'secret':encrypted,
+                    'gcc_username': gcc_username, 'secret':None,
                     'hc_server': hc_server}, verify=ssl_verify)
             if res.ok:
                 json_return = res.json()
@@ -462,6 +463,13 @@ class CustomAskOkCancel:
 
 
 if __name__ == "__main__":
+
+    name = sys.argv[1]
+    server = sys.argv[2]
+
+    subprocess.call(["pwd"])
+
+    sys.exit(0)
     
     # Read /etc/helpchannel.conf file
     if (not os.path.isfile('/etc/helpchannel.conf') or 
@@ -490,20 +498,20 @@ if __name__ == "__main__":
 
 
     # Get known message
-    if (config_section_map("ServerConfig") 
-        and 'known_message' in config_section_map("ServerConfig")):
-        known_message = config_section_map("ServerConfig")['known_message']
+    #if (config_section_map("ServerConfig") 
+    #    and 'known_message' in config_section_map("ServerConfig")):
+    #    known_message = config_section_map("ServerConfig")['known_message']
         
-    if not known_message or len(known_message.strip()) <= 0:
+    #if not known_message or len(known_message.strip()) <= 0:
         # Known message not specified
-        showerror(_('Error'), _('Known message not specified. Please, check it and '\
-            'try again.'))
-        sys.exit(0)
+    #    showerror(_('Error'), _('Known message not specified. Please, check it and '\
+    #        'try again.'))
+    #    sys.exit(0)
     
     
 
     # Check x11vnc
-    x11vnc_path = config_section_map("x11vncConfig")['command_full_path']
+    x11vnc_path = os.environ['APPDIR'] + config_section_map("x11vncConfig")['command_full_path']
     if not os.path.isfile(x11vnc_path):
         # x11vnc not found
         showerror(_('Error'), _('x11vnc not found at %s. Please, check it and '\
@@ -511,20 +519,20 @@ if __name__ == "__main__":
         sys.exit(0)
 
     # Check /etc/gcc.control
-    if (not os.path.isfile('/etc/gcc.control') or 
-        not os.access('/etc/gcc.control', os.R_OK)):
-        # gcc.control not found or not readable
-        showerror(_('Error'), _('gcc.control not found or is '\
-             'not readable. Please, check it and try again.'))
-        sys.exit(0)    
+    # if (not os.path.isfile('/etc/gcc.control') or 
+    #     not os.access('/etc/gcc.control', os.R_OK)):
+    #     # gcc.control not found or not readable
+    #     showerror(_('Error'), _('gcc.control not found or is '\
+    #          'not readable. Please, check it and try again.'))
+    #     sys.exit(0)    
     
     # Check /etc/chef/client.pem
-    if (not os.path.isfile('/etc/chef/client.pem') or 
-        not os.access('/etc/chef/client.pem', os.R_OK)):
-        # /etc/chef/client.pem not found or not readable
-        showerror(_('Error'), _('/etc/chef/client.pem not found or is '\
-             'not readable. Please, check it and try again.'))
-        sys.exit(0)        
+    # if (not os.path.isfile('/etc/chef/client.pem') or 
+    #     not os.access('/etc/chef/client.pem', os.R_OK)):
+    #     # /etc/chef/client.pem not found or not readable
+    #     showerror(_('Error'), _('/etc/chef/client.pem not found or is '\
+    #          'not readable. Please, check it and try again.'))
+    #     sys.exit(0)        
     
     
     # Start Help Channel Client
