@@ -1,30 +1,41 @@
 from tkinter import *
 from tkinter import ttk
 from tkinter import messagebox
-
+import subprocess
+import os
+import sys
 
 class WelcomeHC:
 
     def __init__(self):
 
+        self.name = ''
+        self.server = ''
+        self.file_path = os.environ['HOME'] + '/' + '.hcdata'
+
+        self.getdata()
+
         root = Tk()
 
-        root.title("Preconfiguración de Helpchannel")
+        root.title("Conexión Helpchannel")
 
         mainframe = ttk.Frame(root, padding="3 3 12 12")
         mainframe.grid(column=0, row=0, sticky=(N, W, E, S))
         root.columnconfigure(0, weight=1)
         root.rowconfigure(0, weight=1)
 
-        self.nombre = StringVar()
-        nombre_entry = ttk.Entry(mainframe, width=18, textvariable=self.nombre)
+        self.name_strvar = StringVar()
+        nombre_entry = ttk.Entry(mainframe, width=18, textvariable=self.name_strvar)
         nombre_entry.grid(column=2, row=2, sticky=(W, E))
-
-        self.ip = StringVar()
-        ip_entry = ttk.Entry(mainframe, width=7, textvariable=self.ip)
+        if self.name != '': self.name_strvar.set(self.name)
+        
+        self.server_strvar = StringVar()
+        ip_entry = ttk.Entry(mainframe, width=7, textvariable=self.server_strvar)
         ip_entry.grid(column=2, row=3, sticky=(W, E))
+        if self.server != '': self.server_strvar.set(self.server) 
 
-        ttk.Button(mainframe, text="Conectar", command=self.validate).grid(column=2, row=5, sticky=E)
+        ttk.Button(mainframe, text="Conectar", command=self.validate).grid(
+            column=2, row=5, sticky=E)
 
         ttk.Label(mainframe, text="Datos de conexión").grid(column=1, row=1, sticky=W)
         ttk.Label(mainframe, text="Nombre").grid(column=1, row=2, sticky=W)
@@ -40,16 +51,46 @@ class WelcomeHC:
         
         root.mainloop()
 
+    def savedata(self):
+
+        with open(self.file_path, 'w') as f:
+            f.write(self.name + '\n')
+            f.write(self.server + '\n')
+
+    def getdata(self):
+
+        if os.path.isfile(self.file_path):
+            with open(self.file_path, 'r') as f:
+                lines = f.readlines()
+                if len(lines) >= 2:
+                    self.name = lines[0].rstrip('\n')
+                    self.server = lines[1].rstrip('\n')
+
     def validate(self, *args):
         
-        if str(self.nombre.get()) == '':
-            messagebox.showerror(title='Error', message='El nombre de usuario no puede estar vacío.')
+        if str(self.name_strvar.get()) == '':
+            messagebox.showerror(
+                title='Error',
+                message='El nombre de usuario no puede estar vacío.')
+        else:
+            self.name = str(self.name_strvar.get())
 
-        if str(self.ip.get()) == '':
-            messagebox.showerror(title='Error', message='La IP/nombre del host no puede estar vacío.')
+        if str(self.server_strvar.get()) == '':
+            messagebox.showerror(
+                title='Error',
+                message='El servidor no puede estar vacío.')
+        else:
+            self.server = str(self.server_strvar.get())
 
-        
+        self.savedata()
+
+
+        #subprocess.call(["python3", os.environ['APPDIR'] + "/usr/bin/helpchannel", ])
+
+        #subprocess.call(["python3", "helpchannel", name, server])
+
     
+
 if __name__ == "__main__":
 
     app = WelcomeHC()
