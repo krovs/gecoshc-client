@@ -85,9 +85,8 @@ class WelcomeHC:
         self.savedata()
 
 
-        #subprocess.call(["python3", os.environ['APPDIR'] + "/usr/bin/helpchannel", ])
-
-        #subprocess.call(["python3", "helpchannel", name, server])
+        subprocess.call(["python3", os.environ['APPDIR'] + \
+            "/usr/bin/helpchannel", self.name, self.server])
 
     
 
