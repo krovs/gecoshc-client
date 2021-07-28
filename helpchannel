@@ -25,7 +25,7 @@ import sys
 
 logging.basicConfig(level=logging.DEBUG)
 
-BASE_DIR = '/usr/share/helpchannel'
+BASE_DIR = os.environ['APPDIR'] + '/usr/share/helpchannel'
 
 config = configparser.ConfigParser()
 
