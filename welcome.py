@@ -4,6 +4,7 @@ from tkinter import messagebox
 import subprocess
 import os
 import sys
+import configparser
 
 class WelcomeHC:
 
@@ -52,7 +53,7 @@ class WelcomeHC:
         root.mainloop()
 
     def savedata(self):
-
+        # save for persistance
         with open(self.file_path, 'w') as f:
             f.write(self.name + '\n')
             f.write(self.server + '\n')
@@ -67,11 +68,14 @@ class WelcomeHC:
                     self.server = lines[1].rstrip('\n')
 
     def validate(self, *args):
+
+        ok = True
         
         if str(self.name_strvar.get()) == '':
             messagebox.showerror(
                 title='Error',
                 message='El nombre de usuario no puede estar vacío.')
+            ok = False
         else:
             self.name = str(self.name_strvar.get())
 
@@ -79,17 +83,19 @@ class WelcomeHC:
             messagebox.showerror(
                 title='Error',
                 message='El servidor no puede estar vacío.')
+            ok = False
         else:
             self.server = str(self.server_strvar.get())
 
-        self.savedata()
+        if ok:
+            self.savedata()
 
-
-        subprocess.call(["python3", os.environ['APPDIR'] + \
-            "/usr/bin/helpchannel", self.name, self.server])
+            subprocess.call(["python3", os.environ['APPDIR'] + \
+                "/usr/bin/helpchannel", self.name, self.server])
 
     
 
 if __name__ == "__main__":
 
     app = WelcomeHC()
+
