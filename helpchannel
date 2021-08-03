@@ -157,7 +157,11 @@ class HelpChannel(Tk):
     Main application class. It's responsible for showing user dialogs.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, name, server, *args, **kwargs):
+
+        self.name = name
+        self.server = server
+
         Tk.__init__(self)
 
         self.container = Frame(self)
@@ -199,7 +203,7 @@ class HelpChannel(Tk):
         status = '01-LOGGED'
         
         tunnelscript = os.environ['APPDIR'] + config_section_map("TunnelConfig")['command_full_path']  
-        command = [tunnelscript]
+        command = [tunnelscript, self.name, self.server]
         logging.info('Starting tunnel...')
         subproc_tunnel = subprocess.Popen(command, stdout=subprocess.PIPE,
             shell=False)
@@ -275,7 +279,7 @@ class LoginFrame(Frame):
 
 
     def do_login(self, controller):
-        
+        '''
         # Read /etc/gcc.control file
         gcc_control_json = []
         with open('/etc/gcc.control') as gcc_control:
@@ -337,7 +341,7 @@ class LoginFrame(Frame):
         global connection_code
         connection_code = json_return['token']
         logging.info('Login OK: connection code=%s'%(connection_code))
-        
+        '''
         controller.open_connection()
 
 
@@ -467,9 +471,6 @@ if __name__ == "__main__":
     name = sys.argv[1]
     server = sys.argv[2]
 
-    subprocess.call(["pwd"])
-
-    sys.exit(0)
     
     # Read /etc/helpchannel.conf file
     if (not os.path.isfile('/etc/helpchannel.conf') or 
@@ -536,7 +537,7 @@ if __name__ == "__main__":
     
     
     # Start Help Channel Client
-    app = HelpChannel()
+    app = HelpChannel(name, server)
 
 
     def custom_ask_ok_cancel(windows_title, ok_message, cancel_message, label_message):

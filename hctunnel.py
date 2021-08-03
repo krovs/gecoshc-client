@@ -81,6 +81,9 @@ def hcwst(host, port,repeater_ws,proxy_host,proxy_port,proxy_username,proxy_pass
 
 if __name__ == '__main__':
 
+    name = sys.argv[1]
+    server = sys.argv[2]
+
     config = configparser.ConfigParser()
     config.read("/etc/helpchannel.conf")
 
@@ -102,7 +105,7 @@ if __name__ == '__main__':
     if 'proxy_password' in server_config:
         proxy_password = server_config['proxy_password']
 
-    repeater_ws = config_section_map("TunnelConfig")['tunnel_url']
+    repeater_ws = 'wss://' + server + '/wsServer'
     local_tunnel_port = config_section_map("TunnelConfig")['local_port']
     ssl_verify = (config_section_map("TunnelConfig")['ssl_verify'] in 
         ['True', 'true', '1', 't', 'y', 'yes'])
@@ -110,10 +113,12 @@ if __name__ == '__main__':
     proxy_auth=(proxy_username, proxy_password)
 
     host, port = '127.0.0.1', int(local_tunnel_port)
+    '''
     if len(sys.argv) > 1:
         host = sys.argv[1]
     if len(sys.argv) > 2:
         port = int(sys.argv[2])
+    '''
     main_thread = threading.Thread(target=hcwst, args=(host, local_tunnel_port,repeater_ws,proxy_host,proxy_port,proxy_username,proxy_password, ssl_verify,))
     main_thread.start()
     if sys.version_info.major > 2:
