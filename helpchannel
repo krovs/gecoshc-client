@@ -162,6 +162,9 @@ class HelpChannel(Tk):
         self.name = name
         self.server = server
 
+        global connection_code
+        connection_code = self.name
+
         Tk.__init__(self)
 
         self.container = Frame(self)
