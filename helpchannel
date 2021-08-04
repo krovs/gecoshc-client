@@ -241,13 +241,14 @@ class HelpChannel(Tk):
             
         logging.info('Accepting the connection...')
         # Rest request to accept connection
+        '''
         ok, errormsg = do_rest_request('/help-channel-client/accept')
         if not ok:
             showerror(_('Error'), _('Error accepting technician: %s')
                 % (errormsg))
             kill_x11()
             sys.exit(0)
-
+        '''
         global alive
         alive = False
         self.switch_frame(EstablishedConnection)
@@ -379,11 +380,11 @@ class EstablishedConnection(Frame):
         status = '10-FINISHED'
 
         kill_x11()
-        
+        '''
         ok, errormsg = do_rest_request('/help-channel-client/finish', {'finisher': 'user'})
         if not ok:
             logging.error('Error in request: %s'%(errormsg))
-        
+        '''
         app.destroy()
         if check_alive_timer:
             check_alive_timer.cancel()
@@ -402,10 +403,11 @@ class EstablishedConnection(Frame):
         seconds = float(config_section_map("x11vncConfig")['polling_interval'])
 
         if subproc_vnc.poll() is not None:
+            '''
             ok, errormsg = do_rest_request('/help-channel-client/finish', {'finisher': 'tech'})
             if not ok:
                 logging.error('Error in request: %s'%(errormsg))
-            
+            '''
             end_loop = True
             time.sleep(0.2)
             showinfo(_('Alert'), _('Connection finished by technician'), parent=app)
@@ -414,16 +416,18 @@ class EstablishedConnection(Frame):
             sys.exit(0)
             
         if subproc_tunnel.poll() is not None:
+            '''
             ok, errormsg = do_rest_request('/help-channel-client/finish', {'finisher': 'error'})
             if not ok:
                 logging.error('Error in request: %s'%(errormsg))
-            
+            '''
             end_loop = True
             time.sleep(0.2)
             showinfo(_('Alert'), _('Connection finished by communication error'), parent=app)
             kill_x11()            
             app.destroy()
             sys.exit(0)
+            
 
         check_alive_timer = threading.Timer(seconds, self.check_alive, (subproc_vnc, controller,))
         check_alive_timer.start()
@@ -562,10 +566,11 @@ if __name__ == "__main__":
 
                 if custom_ask_ok_cancel(_('Close connection'), _('Ok'), _('Cancel'),
                                         _('Are you sure you want to abort the connection?')):
+                    '''
                     ok, errormsg = do_rest_request('/help-channel-client/finish', {'finisher': 'tech'})
                     if not ok:
                         logging.error('Error in request: %s'%(errormsg))
-
+                    '''
                     app.destroy()
                     kill_x11()
                     if check_alive_timer:
