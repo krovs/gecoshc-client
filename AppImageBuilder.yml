@@ -53,6 +53,7 @@ AppDir:
       - x11vnc
       - gettext
       - python-dev
+      - xclip
     exclude: []
 
   runtime:
