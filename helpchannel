@@ -36,7 +36,7 @@ ssl_context = None
 
 def handler(signum, frame):
     logging.info('Signal handler called with signal: %s'%(signum))
-    app._frame.label.config(text=_('A technician is controlling your session'))
+    app._frame.label.config(text=_('A technician is controlling your session\n'))
     return
 
 # Set SIGUSR signal handler
@@ -370,17 +370,17 @@ class EstablishedConnection(Frame):
 
         self.label = Label(self, text=_('Connection stablished'), bg="white")
         self.label.pack(side=LEFT, fill=BOTH, expand=True)
-        
+
         global connection_code
         global connection_host
-        techurl = 'https://' + connection_host + '/?repeaterID=ID:' + connection_code 
+        techurl = ' https://' + connection_host + '/?repeaterID=ID:' + connection_code  + ' '
         label3 = Label(self, text=_(techurl), bg="white")
         label3.pack(side=BOTTOM, fill=BOTH, expand=True)
-	
-        label2 = Label(self, text=_('Entregue el siguiente enlace al tecnico:\n'), bg="white")
-        label2.pack(side=BOTTOM, fill=BOTH, expand=True)
         
-
+        label2 = Label(self, text=_('Entregue el siguiente enlace al tecnico:'), bg="white")
+        label2.pack(side=BOTTOM, fill=BOTH, expand=True)
+	
+        
         finish_button = Button(self, text=_('Shut off connection'), command=lambda: self.finish_connection(controller, ))
         finish_button.pack(in_=bottom, side=LEFT, fill=BOTH, expand=True)
         
