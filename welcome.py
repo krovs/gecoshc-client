@@ -4,7 +4,26 @@ from tkinter import messagebox
 import subprocess
 import os
 import sys
+import gettext
 import configparser
+
+config = configparser.ConfigParser()
+language = 'es'
+
+
+def set_locales():
+    config.read(os.environ['APPDIR'] + '/etc/helpchannel.conf')
+
+    language = config['i18nConfig']['language']
+
+    try:
+        lang = gettext.translation('helpchannel', os.environ['APPDIR'] + '/usr/share/locale', languages=[language])
+        lang.install()    
+    except IOError:
+        print("No translations available")
+        _ = gettext.gettext
+
+
 
 class WelcomeHC:
 
@@ -18,7 +37,7 @@ class WelcomeHC:
 
         root = Tk()
 
-        root.title("Conexión Helpchannel")
+        root.title(_("Connecting to Helpchannel"))
 
         mainframe = ttk.Frame(root, padding="3 3 12 12")
         mainframe.grid(column=0, row=0, sticky=(N, W, E, S))
@@ -35,12 +54,12 @@ class WelcomeHC:
         ip_entry.grid(column=2, row=3, sticky=(W, E))
         if self.server != '': self.server_strvar.set(self.server) 
 
-        ttk.Button(mainframe, text="Conectar", command=self.validate).grid(
+        ttk.Button(mainframe, text=_("Connect"), command=self.validate).grid(
             column=2, row=5, sticky=E)
 
-        ttk.Label(mainframe, text="Datos de conexión").grid(column=1, row=1, sticky=W)
-        ttk.Label(mainframe, text="Nombre").grid(column=1, row=2, sticky=W)
-        ttk.Label(mainframe, text="Servidor").grid(column=1, row=3, sticky=W)
+        ttk.Label(mainframe, text=_("Connection data")).grid(column=1, row=1, sticky=W)
+        ttk.Label(mainframe, text=_("Name")).grid(column=1, row=2, sticky=W)
+        ttk.Label(mainframe, text=_("Host")).grid(column=1, row=3, sticky=W)
 
         for child in mainframe.winfo_children(): 
             child.grid_configure(padx=5, pady=5)
@@ -93,9 +112,11 @@ class WelcomeHC:
             subprocess.call(["python3", os.environ['APPDIR'] + \
                 "/usr/bin/helpchannel", self.name, self.server])
 
-    
 
 if __name__ == "__main__":
+
+    # set locales
+    set_locales()
 
     app = WelcomeHC()
 
