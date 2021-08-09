@@ -18,11 +18,9 @@ script:
   - cp -r websocket AppDir/usr/lib/python3/dist-packages/
   - cp locale/en/LC_MESSAGES/en.mo AppDir/usr/share/locale/en/LC_MESSAGES/helpchannel.mo
   - cp locale/es/LC_MESSAGES/es.mo AppDir/usr/share/locale/es/LC_MESSAGES/helpchannel.mo
-  #- cp /etc/chef/client.pem AppDir/etc/chef/
   - cp welcome.py AppDir/usr/bin/
   # Other
   - chmod 644 AppDir/etc/helpchannel.conf
-  # chmod 644 AppDir/etc/chef/client.pem
   # Install application dependencies
   - python3 -m pip install --ignore-installed --prefix=/usr --root=AppDir -r ./requirements.txt
 
