@@ -236,7 +236,7 @@ class HelpChannel(Tk):
         repeater = config_section_map("x11vncConfig")['remote_repeater']
         port = config_section_map("x11vncConfig")['remote_port']
 
-        connect_parameter = "repeater=ID:%s+%s:%s" % (connection_code, repeater, port,)
+        connect_parameter = "repeater=ID:%s-SDC+%s:%s" % (connection_code, repeater, port,)
 
         command = [command_full_path,
             "-afteraccept","/bin/kill -SIGUSR1 %s"%(os.getpid()),
@@ -599,7 +599,7 @@ if __name__ == "__main__":
                 else:
                     closeDialogOpened = False
             else:
-#                kill_x11()
+                #kill_x11()
                 app.destroy()
                 if check_alive_timer:
                     check_alive_timer.cancel()
