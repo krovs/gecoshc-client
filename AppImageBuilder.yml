@@ -1,0 +1,77 @@
+version: 1
+script:
+  # Remove any previous build
+  - rm -rf AppDir  | true
+  # Make necessary dirs
+  - mkdir -p AppDir/usr/share/helpchannel
+  - mkdir -p AppDir/etc/chef
+  - mkdir -p AppDir/usr/bin
+  - mkdir -p AppDir/usr/applications
+  - mkdir -p AppDir/usr/share/locale/en/LC_MESSAGES
+  - mkdir -p AppDir/usr/share/locale/es/LC_MESSAGES
+  - mkdir -p AppDir/usr/lib/python3/dist-packages/
+  # Copy all files into the AppDir
+  - cp helpchannel hctunnel.py AppDir/usr/bin/
+  - cp helpchannel.desktop AppDir/usr/applications/
+  - cp helpchannel.svg AppDir/usr/share/helpchannel/
+  - cp helpchannel.conf AppDir/etc/
+  - cp -r websocket AppDir/usr/lib/python3/dist-packages/
+  - cp locale/en/LC_MESSAGES/en.mo AppDir/usr/share/locale/en/LC_MESSAGES/helpchannel.mo
+  - cp locale/es/LC_MESSAGES/es.mo AppDir/usr/share/locale/es/LC_MESSAGES/helpchannel.mo
+  - cp welcome.py AppDir/usr/bin/
+  # Other
+  - chmod 644 AppDir/etc/helpchannel.conf
+  # Install application dependencies
+  - python3 -m pip install --ignore-installed --prefix=/usr --root=AppDir -r ./requirements.txt
+
+AppDir:
+  path: ./AppDir
+
+  app_info:
+    id: org.gecos.helpchannel
+    name: helpchannel
+    icon: utilities-terminal
+    version: 1.2.1
+    # Set the python executable as entry point
+    exec: usr/bin/python3
+    # Set the application main script path as argument. Use '$@' to forward CLI parameters
+    exec_args: "$APPDIR/usr/bin/welcome.py $@"
+
+  apt:
+    arch: amd64
+    sources:
+      - sourceline: 'deb [arch=amd64] http://archive.ubuntu.com/ubuntu/ focal main restricted universe multiverse'
+        key_url: 'http://keyserver.ubuntu.com/pks/lookup?op=get&search=0x3b4fe6acc0b21f32'
+
+    include:
+      - python3
+      - python3-pip
+      - python3-requests
+      - python3-tk
+      - x11vnc
+      - gettext
+      - python-dev
+      - xclip
+    exclude: []
+
+  runtime:
+    version: "continuous"
+    env:
+      PATH: '${APPDIR}/usr/bin:${PATH}'
+      # Set python home
+      # See https://docs.python.org/3/using/cmdline.html#envvar-PYTHONHOME
+      PYTHONHOME: '${APPDIR}/usr'
+      # Path to the site-packages dir or other modules dirs
+      # See https://docs.python.org/3/using/cmdline.html#envvar-PYTHONPATH
+      PYTHONPATH: '${APPDIR}/usr/lib/python3.8/site-packages'
+      # Set tkinter lib path
+      # https://docs.python.org/3/faq/gui.html?highlight=tcl_library#how-do-i-freeze-tkinter-applications
+      APPDIR_LIBRARY_PATH: '${APPDIR}/usr/lib:${APPDIR}/usr/lib/x86_64-linux-gnu:${APPDIR}/lib/x86_64-linux-gnu'
+      TCL_LIBRARY: '${APPDIR}/usr/share/tcltk/tcl8.6'
+      TK_LIBRARY: '${APPDIR}/usr/lib/tcltk/x86_64-linux-gnu/tk8.6'
+      TKPATH: '{APPDIR}/usr/lib/tcltk/x86_64-linux-gnu/tk8.6'
+
+AppImage:
+  update-information: 'gh-releases-zsync|AppImageCrafters|python-appimage-example|latest|python-appimage-*x86_64.AppImage.zsync'
+  sign-key: None
+  arch: x86_64

@@ -1,3 +1,22 @@
+gecosws-hc-client (1.2.1) 1-0-staging; urgency=low
+
+  * Remove pycos library
+  * Wait until hctunnel is connected before starting x11vnc
+
+ -- Gecos Team <gecos@guadalinex.org> Wed, 7 Apr 2021 12:00:00 +0100
+
+gecosws-hc-client (1.2.0) 1-0-staging; urgency=low
+
+  * Migate to Python3
+
+ -- Gecos Team <gecos@guadalinex.org> Mon, 16 Mar 2021 12:00:00 +0100
+
+gecosws-hc-client (1.1.1) 1-0-staging; urgency=low
+
+  * Fix error in parenthesis
+
+ -- Gecos Team <gecos@guadalinex.org> Mon, 1 Apr 2019 12:00:00 +0100
+
 gecosws-hc-client (1.1.0) 1-0-staging; urgency=low
 
   * Fix in default CA path for ssl validation
