@@ -4,6 +4,7 @@ script:
   - rm -rf AppDir  | true
   # Make necessary dirs
   - mkdir -p AppDir/usr/share/helpchannel
+  - mkdir -p AppDir/usr/share/icons
   - mkdir -p AppDir/etc/chef
   - mkdir -p AppDir/usr/bin
   - mkdir -p AppDir/usr/applications
@@ -14,6 +15,7 @@ script:
   - cp helpchannel hctunnel.py AppDir/usr/bin/
   - cp helpchannel.desktop AppDir/usr/applications/
   - cp helpchannel.svg AppDir/usr/share/helpchannel/
+  - cp helpchannel.svg AppDir/usr/share/icons/
   - cp helpchannel.conf AppDir/etc/
   - cp -r websocket AppDir/usr/lib/python3/dist-packages/
   - cp locale/en/LC_MESSAGES/en.mo AppDir/usr/share/locale/en/LC_MESSAGES/helpchannel.mo
@@ -30,7 +32,7 @@ AppDir:
   app_info:
     id: org.gecos.helpchannel
     name: helpchannel
-    icon: utilities-terminal
+    icon: helpchannel
     version: 1.2.1
     # Set the python executable as entry point
     exec: usr/bin/python3
