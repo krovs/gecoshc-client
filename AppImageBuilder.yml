@@ -25,6 +25,8 @@ script:
   - chmod 644 AppDir/etc/helpchannel.conf
   # Install application dependencies
   - python3 -m pip install --ignore-installed --prefix=/usr --root=AppDir -r ./requirements.txt
+  # Check that the dependencies are installed in AppDir/usr/lib/python3.8 directory
+  - [[ -d AppDir/usr/lib/python3.8 ]] || mv AppDir/usr/lib/python3.* AppDir/usr/lib/python3.8
 
 AppDir:
   path: ./AppDir
@@ -52,7 +54,7 @@ AppDir:
       - python3-tk
       - x11vnc
       - gettext
-      - python-dev
+      - python3-dev
       - xclip
     exclude: []
 
