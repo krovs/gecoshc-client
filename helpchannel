@@ -209,8 +209,12 @@ class HelpChannel(Tk):
         logging.info('Opening connection')
         status = '01-LOGGED'
         
-        tunnelscript = os.environ['APPDIR'] + config_section_map("TunnelConfig")['command_full_path']  
+        tunnelscript = os.environ['APPDIR'] + config_section_map("TunnelConfig")['command_full_path']
         command = [tunnelscript, self.name, self.server]
+        if tunnelscript.endswith('.py'):
+            # Use the same python
+            command = [sys.executable, tunnelscript, self.name, self.server]
+
         logging.info('Starting tunnel...')
         subproc_tunnel = subprocess.Popen(command, stdout=subprocess.PIPE,
             shell=False)
@@ -225,6 +229,12 @@ class HelpChannel(Tk):
                 print(line)
             else:
                 break
+        
+        if subproc_tunnel.poll() is not None:
+            logging.error("Tunnel creation failed with code: %s"%(subproc_tunnel.returncode))
+            logging.error("Tunnel creation command: %s"%(command))
+            sys.exit(-1)
+
         
 
         subproc_tunnel_out = threading.Thread(target=print_output,
