@@ -13,6 +13,7 @@ script:
   - mkdir -p AppDir/usr/lib/python3/dist-packages/
   # Copy all files into the AppDir
   - cp helpchannel hctunnel.py AppDir/usr/bin/
+  - chmod 755 AppDir/usr/bin/hctunnel.py
   - cp helpchannel.desktop AppDir/usr/applications/
   - cp helpchannel.svg AppDir/usr/share/helpchannel/
   - cp helpchannel.svg AppDir/usr/share/icons/
