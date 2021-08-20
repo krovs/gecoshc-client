@@ -191,7 +191,6 @@ class HelpChannel(Tk):
         self.wm_title("Help Channel")
 
         self._frame = LoginFrame(parent=self.container, controller=self)
-        self._frame.do_login(self)
 
 
     def switch_frame(self, frame_class):
@@ -561,6 +560,7 @@ if __name__ == "__main__":
     
     # Start Help Channel Client
     app = HelpChannel(name, server)
+    app._frame.do_login(app)
 
 
     def custom_ask_ok_cancel(windows_title, ok_message, cancel_message, label_message):
