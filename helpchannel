@@ -23,6 +23,7 @@ import logging
 import signal
 import sys
 import clipboard
+import secrets
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -159,16 +160,20 @@ class HelpChannel(Tk):
     Main application class. It's responsible for showing user dialogs.
     """
 
-    def __init__(self, name, server, *args, **kwargs):
+    def __init__(self, server, key, *args, **kwargs):
 
-        self.name = name
         self.server = server
+        self.key = key
+        self.token = secrets.token_hex(3).upper()
 
         global connection_code
-        connection_code = self.name
+        connection_code = self.token
 
         global connection_host
         connection_host = self.server
+
+        global connection_key
+        connection_key = self.key
 
         Tk.__init__(self)
 
@@ -210,10 +215,10 @@ class HelpChannel(Tk):
         status = '01-LOGGED'
         
         tunnelscript = os.environ['APPDIR'] + config_section_map("TunnelConfig")['command_full_path']
-        command = [tunnelscript, self.name, self.server]
+        command = [tunnelscript, self.server]
         if tunnelscript.endswith('.py'):
             # Use the same python
-            command = [sys.executable, tunnelscript, self.name, self.server]
+            command = [sys.executable, tunnelscript, self.server]
 
         logging.info('Starting tunnel...')
         subproc_tunnel = subprocess.Popen(command, stdout=subprocess.PIPE,
@@ -245,7 +250,7 @@ class HelpChannel(Tk):
         repeater = config_section_map("x11vncConfig")['remote_repeater']
         port = config_section_map("x11vncConfig")['remote_port']
 
-        connect_parameter = "repeater=ID:%s-SDC+%s:%s" % (connection_code, repeater, port,)
+        connect_parameter = "repeater=ID:%s+KEY:%s+%s:%s" % (connection_code, connection_key, repeater, port,)
 
         command = [command_full_path,
             "-afteraccept","/bin/kill -SIGUSR1 %s"%(os.getpid()),
@@ -381,18 +386,16 @@ class EstablishedConnection(Frame):
         self.label.pack(side=TOP, fill=BOTH, expand=True)
 
         global connection_code
-        global connection_host
-        techurl = ' https://' + connection_host + '/?repeaterID=ID:' + connection_code  + ' '
-        label3 = Label(self, text=techurl, bg="white")
+        label3 = Label(self, text=connection_code + '\n', bg="white")
         label3.pack(side=BOTTOM, fill=BOTH, expand=True)
 
-        label2 = Label(self, text=_('Show the following link to the technician:\n'), bg="white")
+        label2 = Label(self, text=_('Connection ID:\n'), bg="white")
         label2.pack(side=BOTTOM, fill=BOTH, expand=True)
         
         finish_button = Button(self, text=_('Shut off connection'), command=lambda: self.finish_connection(controller, ))
         finish_button.pack(in_=bottom, side=LEFT, fill=BOTH, expand=True)
         
-        copy_button = Button(self, text=_('Copy URL'), command=clipboard.copy(techurl))
+        copy_button = Button(self, text=_('Copy ID'), command=clipboard.copy(connection_code))
         copy_button.pack(in_=bottom, side=RIGHT, fill=BOTH, expand=True)
 
         self.pack()
@@ -451,7 +454,7 @@ class EstablishedConnection(Frame):
             '''
             end_loop = True
             time.sleep(0.2)
-            showinfo(_('Alert'), _('Connection finished by communication error'), parent=app)
+            showinfo(_('Alert'), _('Connection finished by communication error or wrong server key.'), parent=app)
             kill_x11()            
             app.destroy()
             sys.exit(0)
@@ -500,20 +503,20 @@ class CustomAskOkCancel:
 
 if __name__ == "__main__":
 
-    name = sys.argv[1]
-    server = sys.argv[2]
+    server = sys.argv[1]
+    key = sys.argv[2]
 
     
     # Read /etc/helpchannel.conf file
-    if (not os.path.isfile('/etc/helpchannel.conf') or 
-        not os.access('/etc/helpchannel.conf', os.R_OK)):
+    if (not os.path.isfile(os.environ['APPDIR'] + '/etc/helpchannel.conf') or 
+        not os.access(os.environ['APPDIR'] + '/etc/helpchannel.conf', os.R_OK)):
         # /etc/helpchannel.conf not found or not readable
-        showerror('Error', '/etc/helpchannel.conf not found or is '\
+        showerror('Error', os.environ['APPDIR'] + '/etc/helpchannel.conf not found or is '\
              'not readable. Please, check it and try again.')
         sys.exit(0)
         
     try:
-        config.read('/etc/helpchannel.conf')
+        config.read(os.environ['APPDIR'] + '/etc/helpchannel.conf')
     except configparser.ParsingError as err:
         showerror('Error', 'Error parsing /etc/helpchannel.conf: %s' 
             % (str(err)))
@@ -569,7 +572,7 @@ if __name__ == "__main__":
     
     
     # Start Help Channel Client
-    app = HelpChannel(name, server)
+    app = HelpChannel(server, key)
     app._frame.do_login(app)
 
 
