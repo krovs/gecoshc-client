@@ -81,11 +81,10 @@ def hcwst(host, port,repeater_ws,proxy_host,proxy_port,proxy_username,proxy_pass
 
 if __name__ == '__main__':
 
-    name = sys.argv[1]
-    server = sys.argv[2]
+    server = sys.argv[1]
 
     config = configparser.ConfigParser()
-    config.read("/etc/helpchannel.conf")
+    config.read(os.environ['APPDIR'] + "/etc/helpchannel.conf")
 
     server_config = config_section_map("ServerConfig")
 
