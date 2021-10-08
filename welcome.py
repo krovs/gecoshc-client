@@ -7,6 +7,7 @@ import sys
 import gettext
 import configparser
 import hashlib
+import socket
 
 config = configparser.ConfigParser()
 language = 'es'
@@ -44,6 +45,7 @@ class WelcomeHC:
         mainframe.grid(column=0, row=0, sticky=(N, W, E, S))
         root.columnconfigure(0, weight=1)
         root.rowconfigure(0, weight=1)
+        root.resizable(0,0)
         
         self.server_strvar = StringVar()
         ip_entry = ttk.Entry(mainframe, width=18, textvariable=self.server_strvar)
@@ -97,6 +99,13 @@ class WelcomeHC:
 
     def validate(self, *args):
 
+        def good_netloc(netloc):
+            try:
+                socket.gethostbyname(netloc)
+                return True
+            except:
+                return False
+
         ok = True
 
         if str(self.server_strvar.get()) == '':
@@ -105,7 +114,13 @@ class WelcomeHC:
                 message='El servidor no puede estar vacío.')
             ok = False
         else:
-            self.server = str(self.server_strvar.get())
+            if not good_netloc(str(self.server_strvar.get())):
+                messagebox.showerror(
+                    title='Error',
+                    message='El campo servidor no es valido')
+                ok = False
+            else:
+                self.server = str(self.server_strvar.get())
 
         if str(self.key_strvar.get()) == '':
             messagebox.showerror(
